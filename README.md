@@ -299,4 +299,5 @@ construction rather than by careful sizing. The window chrome is mounted once an
 only the content region re-renders, so navigating between views never restarts an
 animation or steals focus.
 #   P r o j e c t A n a l y s i s  
+ #   P r o j e c t A n a l y s i s  
  
