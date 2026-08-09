@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# The native interface: Qt widgets, no browser engine of any kind.
+PySide6>=6.6

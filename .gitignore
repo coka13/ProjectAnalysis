@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.data/
+*.sqlite3
+*.db
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+.DS_Store
+
+# The bundled Edge WebView2 Fixed Version Runtime and the archive it came in:
+# around 290 MB each, fetched from Microsoft rather than committed. The README
+# explains how to add it.
+webview2/
+*.cab
+
+# Screenshots and logs produced by tools/compare_ui.py.
+build/compare/
+*.log

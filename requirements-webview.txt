@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# The WebView2 interface: pywebview hosts web/ in an Edge WebView2 window.
+pywebview>=5.0

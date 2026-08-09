@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "projectanalysis"
+version = "1.0.0"
+description = "ProjectAnalysis - a local desktop app that reads any codebase and generates architecture diagrams, metrics and guided fixes"
+requires-python = ">=3.10"
+# Shared by both front ends: everything below the window.
+dependencies = [
+    "sqlalchemy>=2.0",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "httpx>=0.27",
+    "cryptography>=42.0",
+    "networkx>=3.2",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Pick the interface you want; installing both is fine.
+webview = ["pywebview>=5.0"]
+native = ["PySide6>=6.6"]
+
+[project.scripts]
+# Two ways to run the same application.
+projectanalysis = "app.desktop.window:run"
+projectanalysis-native = "app.ui.main:run"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # import ordering
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "PTH",  # prefer pathlib over os.path
+    "S",    # bandit security rules
+    "RUF",
+]
+ignore = [
+    "E501",    # long lines are a formatting concern, not a lint failure
+    "B008",    # Field(default_factory=...) in a default is idiomatic pydantic
+    "SIM108",  # a ternary is not always more readable than an if
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, poke at private helpers and build throwaway git repos.
+"tests/*" = ["S"]
+"tools/*" = ["S"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["app"]
+ignore_missing_imports = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true

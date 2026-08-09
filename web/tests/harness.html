@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <title>ProjectAnalysis - browser tests</title>
+  <link rel="stylesheet" href="../css/app.css" />
+</head>
+<body>
+  <div id="root"></div>
+  <pre id="out"></pre>
+
+  <script>
+    // A parse error in any application script surfaces here and nowhere else -
+    // it would otherwise leave the real app with a blank window and no clue.
+    window.__SCRIPT_ERRORS__ = [];
+    window.addEventListener('error', (event) => {
+      window.__SCRIPT_ERRORS__.push(String(event.message || event.error || 'unknown'));
+    });
+  </script>
+
+  <!-- The real application scripts, in the same order index.html loads them.
+       app.js is included so a syntax error in it fails the suite instead of the
+       app; its boot sequence stops harmlessly at the first bridge call. -->
+  <script src="../vendor/mermaid.min.js"></script>
+  <script src="../i18n/en.js"></script>
+  <script src="../i18n/he.js"></script>
+  <script src="../js/dom.js"></script>
+  <script src="../js/i18n.js"></script>
+  <script src="../js/api.js"></script>
+  <script src="../js/charts.js"></script>
+  <script src="../js/gitgraph.js"></script>
+  <script src="../js/palette.js"></script>
+  <script src="../js/viewer.js"></script>
+  <script src="../js/score.js"></script>
+  <script src="../js/app.js"></script>
+
+  <!-- Test framework and suites. -->
+  <script src="framework.js"></script>
+  <script src="dom.test.js"></script>
+  <script src="charts.test.js"></script>
+  <script src="labels.test.js"></script>
+  <script src="viewer.test.js"></script>
+  <script src="gitgraph.test.js"></script>
+
+  <script>
+    (async function () {
+      let payload;
+      try {
+        payload = { ok: true, results: await window.AAITest.run() };
+      } catch (error) {
+        payload = { ok: false, results: [], error: String((error && error.stack) || error) };
+      }
+      window.__TEST_RESULTS__ = payload;
+      document.getElementById('out').textContent = JSON.stringify(payload, null, 2);
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.report) {
+        window.pywebview.api.report(payload);
+      }
+    })();
+  </script>
+</body>
+</html>

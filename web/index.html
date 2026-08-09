@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en" dir="ltr" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none';" />
+  <title>ProjectAnalysis</title>
+  <!-- The same node mark as the executable, the window and the About page.
+       Inlined as a data URI because the page is loaded over file://, where a
+       relative icon path resolves inconsistently and the CSP treats the origin
+       as opaque. Keep in step with ICON_PATHS.appmark in web/js/dom.js. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234f9cf9' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9.4 6a2.6 2.6 0 1 0 5.2 0 2.6 2.6 0 1 0-5.2 0M3 18a2.6 2.6 0 1 0 5.2 0 2.6 2.6 0 1 0-5.2 0M15.8 18a2.6 2.6 0 1 0 5.2 0 2.6 2.6 0 1 0-5.2 0M10.8 8.3 6.8 15.7M13.2 8.3 17.2 15.7M8.2 18h7.6'/%3E%3C/svg%3E" />
+  <!-- Applies the stored appearance before the first paint so the window never
+       flashes the default theme while app.js is still loading. -->
+  <script>
+    (function () {
+      var root = document.documentElement;
+      function pref(key, fallback) {
+        try {
+          var value = localStorage.getItem(key);
+          return value === null ? fallback : value;
+        } catch (err) { return fallback; }
+      }
+      root.dataset.theme = pref('aai.theme', 'dark') === 'light' ? 'light' : 'dark';
+      root.dataset.contrast = pref('aai.contrast', 'normal');
+      root.dataset.palette = pref('aai.palette', 'default');
+      root.dataset.motion = pref('aai.motion', 'full');
+      root.style.setProperty('--ui-scale', pref('aai.scale', '1'));
+      var lang = pref('aai.language', 'en');
+      root.lang = lang;
+      root.dir = lang === 'he' ? 'rtl' : 'ltr';
+    })();
+  </script>
+  <!-- Deliberately ES5, and loaded before every other script, so it survives an
+       engine that cannot parse the application itself. Without WebView2 pywebview
+       falls back to Internet Explorer, where each application script dies on its
+       first arrow function and the window stays an empty dark rectangle. These
+       handlers are what turn that black screen into a readable report. -->
+  <script>
+    window.__BOOT_ERRORS__ = [];
+    window.addEventListener('error', function (event) {
+      // A script that never downloaded raises a resource error, which carries no
+      // message at all - only the element that failed. Naming the file is the
+      // whole point, so it is read off the target.
+      var target = event.target;
+      if (target && target !== window && target.src) {
+        window.__BOOT_ERRORS__.push('could not load ' + String(target.src).split('/').pop());
+        return;
+      }
+      var file = event.filename ? String(event.filename).split('/').pop() : '';
+      window.__BOOT_ERRORS__.push(
+        String(event.message || 'error') + (file ? ' \u2014 ' + file + ':' + (event.lineno || 0) : '')
+      );
+    }, true);
+  </script>
+  <link rel="stylesheet" href="css/app.css" />
+  <!-- Ascending bars on a rounded tile: legible down to 16px, unlike a letterform. -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%234f9cf9'/><g fill='%23081019'><rect x='7' y='17' width='5' height='8' rx='1.5'/><rect x='13.5' y='12' width='5' height='13' rx='1.5'/><rect x='20' y='7' width='5' height='18' rx='1.5'/></g></svg>" />
+</head>
+<body>
+  <a class="skip-link" href="#main" data-i18n="a11y.skipToContent">Skip to content</a>
+  <div id="root"></div>
+  <div id="toasts" role="status" aria-live="polite"></div>
+
+  <!-- Classic scripts, loaded in dependency order. ES modules and fetch() are
+       blocked for file:// documents, so everything is exposed on window.AAI. -->
+  <script src="vendor/mermaid.min.js"></script>
+  <script src="i18n/en.js"></script>
+  <script src="i18n/he.js"></script>
+  <script src="js/dom.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/gitgraph.js"></script>
+  <script src="js/palette.js"></script>
+  <script src="js/viewer.js"></script>
+  <script src="js/score.js"></script>
+  <script src="js/app.js"></script>
+
+  <!-- Also ES5. If #root is still empty shortly after load then no application
+       script ran, so nothing else on this page is able to say why. Everything
+       here is built with createElement and textContent: app.css may never have
+       applied, and the engine may not support custom properties at all. -->
+  <script>
+    (function () {
+      var WEBVIEW2 = 'https://developer.microsoft.com/microsoft-edge/webview2/';
+
+      function line(parent, text, colour) {
+        var node = document.createElement('p');
+        node.style.cssText = 'margin:0 0 10px;font:14px/1.6 Segoe UI,Arial,sans-serif;color:' + colour;
+        node.textContent = text;
+        parent.appendChild(node);
+        return node;
+      }
+
+      function diagnose() {
+        var root = document.getElementById('root');
+        // The application clears #root and paints a spinner as its very first
+        // act, so anything in there means the UI booted and owns the window.
+        if (!root || root.firstChild) return;
+
+        var modern = true;
+        try {
+          new Function('return (function (a) { return a; })');
+          new Function('var f = function (a) { return a; }; f(1);');
+          new Function('return ((a) => a)(1)');
+        } catch (err) {
+          modern = false;
+        }
+
+        var panel = document.createElement('div');
+        panel.style.cssText =
+          'max-width:720px;margin:48px auto;padding:24px 28px;border:1px solid #26313f;' +
+          'border-radius:10px;background:#111823;color:#e6edf6;' +
+          'font:14px/1.6 Segoe UI,Arial,sans-serif';
+
+        var title = document.createElement('h1');
+        title.style.cssText = 'margin:0 0 12px;font-size:20px;color:#ffffff';
+        title.textContent = 'ProjectAnalysis could not start';
+        panel.appendChild(title);
+
+        if (!modern) {
+          line(panel, 'This window is running the legacy Internet Explorer engine, which cannot run this interface.', '#ffb454');
+          line(panel, 'Install the Microsoft Edge WebView2 Runtime, then start the application again:', '#e6edf6');
+          line(panel, WEBVIEW2, '#7cc4ff');
+        } else {
+          line(panel, 'The interface scripts did not load. The application files are most likely incomplete - copy the whole folder, including the web directory.', '#ffb454');
+        }
+
+        var errors = window.__BOOT_ERRORS__ || [];
+        if (errors.length) {
+          line(panel, 'Reported errors:', '#93a4b8');
+          var list = document.createElement('ul');
+          list.style.cssText = 'margin:0;padding-inline-start:20px;color:#93a4b8;font:12px/1.6 Consolas,monospace';
+          for (var i = 0; i < errors.length && i < 12; i += 1) {
+            var item = document.createElement('li');
+            item.textContent = errors[i];
+            list.appendChild(item);
+          }
+          panel.appendChild(list);
+        }
+
+        root.appendChild(panel);
+      }
+
+      // Long enough that a slow first paint is never mistaken for a failure.
+      setTimeout(diagnose, 5000);
+    })();
+  </script>
+</body>
+</html>

@@ -36,37 +36,73 @@ deterministic static analysis, so the app is fully useful offline.
 
 ---
 
+## Two ways to run it
+
+The same application ships with two interchangeable interfaces. They share every
+line of analysis, scoring, diagram and export code — only the window differs.
+
+| | **WebView2 build** | **Native build** |
+|---|---|---|
+| Run with | `python -m app` | `python -m app.ui` |
+| Console script | `projectanalysis` | `projectanalysis-native` |
+| Interface | HTML/CSS/JS in `web/`, hosted by pywebview | Qt widgets in `app/ui/` |
+| Needs Edge WebView2 | **Yes** (or a bundled runtime) | **No** |
+| Extra dependency | `pywebview` | `PySide6` |
+| PyInstaller spec | `ProjectAnalysis.spec` | `ProjectAnalysisNative.spec` |
+| Window state file | `window-state.json` | `window-state-native.json` |
+| Log file | `app.log` | `app-native.log` |
+
+Both may be installed at once. They keep separate window geometry and log files,
+so running one never disturbs the other.
+
+**Which should I use?** The WebView2 build is the original and remains the visual
+reference. Choose the native build when the target machine has no Edge WebView2
+Runtime, cannot install one, or shows a black window because of it.
+
+### Why there are two
+
+Everything below the window — `app/analyzers`, `app/graph`, `app/diagrams`,
+`app/engine`, `app/services` and the `Api` in `app/desktop/bridge.py` — is shared.
+`Api` is deliberately free of any UI toolkit: the only calls that need a window
+are the file dialogs, and those sit behind a small `FileDialogHost` protocol that
+each front end implements. A change to the analysis or scoring reaches both
+interfaces at once.
+
+---
+
 ## Requirements
 
 - Python 3.10 or newer
-- Windows: the **Microsoft Edge WebView2 Runtime**. Windows 11 and current
-  Windows 10 builds already have it; older or locked-down images may not. Without
-  it the window falls back to the Internet Explorer engine, which cannot run this
-  interface — see *Moving it to another computer* below.
-- macOS / Linux: the system webview (WebKit) that pywebview uses
 - `git` on the PATH, if you want to analyse git repositories or history
+- **For the WebView2 build only**: the Microsoft Edge WebView2 Runtime on Windows,
+  or the system WebKit webview on macOS/Linux. Windows 11 and current Windows 10
+  builds already have it; older or locked-down images may not.
+- **For the native build**: nothing beyond PySide6. It has no browser engine.
 
 ## Install
 
+Install the shared core plus the interface you want:
+
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\pip install -r requirements.txt
+
+# WebView2 build
+.\.venv\Scripts\pip install -r requirements-webview.txt
+
+# Native build (no WebView2)
+.\.venv\Scripts\pip install -r requirements-native.txt
 ```
 
-On macOS / Linux:
-
-```bash
-python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt
-```
+On macOS / Linux, use `./.venv/bin/pip` in place of `.\.venv\Scripts\pip`.
 
 ## Run
 
 ```powershell
-.\.venv\Scripts\python -m app
+.\.venv\Scripts\python -m app        # WebView2 interface
+.\.venv\Scripts\python -m app.ui     # native interface
 ```
 
-A native window opens. Nothing is served over HTTP and no port is opened.
+A desktop window opens. Nothing is served over HTTP and no port is opened.
 
 ## Building a Windows executable
 
@@ -76,14 +112,21 @@ with no console window:
 
 ```powershell
 .\.venv\Scripts\pip install pyinstaller
-.\.venv\Scripts\python tools\build_exe.py
+
+.\.venv\Scripts\python tools\build_exe.py --target webview   # default
+.\.venv\Scripts\python tools\build_exe.py --target native
+.\.venv\Scripts\python tools\build_exe.py --target both
 ```
 
-The result is `dist\ProjectAnalysis\ProjectAnalysis.exe` next to an `_internal`
-folder holding the interpreter, the UI and the icon. Ship the whole
-`dist\ProjectAnalysis` folder - the executable will not start on its own. It
-needs no Python installation on the target machine, but it still needs the
-**Microsoft Edge WebView2 Runtime**, and it will tell you so if it is missing.
+That produces `dist\ProjectAnalysis\ProjectAnalysis.exe` and/or
+`dist\ProjectAnalysisNative\ProjectAnalysisNative.exe`, each next to an
+`_internal` folder holding the interpreter, the UI and the icon. Ship the whole
+folder — the executable will not start on its own. Neither needs Python on the
+target machine.
+
+The native build additionally needs **no Edge WebView2 Runtime**: its spec
+excludes `webview`, `clr_loader` and every QtWebEngine module, so no browser
+engine can reach the output.
 
 The executable carries the icon, product name, file description, company and
 version taken from `app/branding.py` — change the version in one place there and
@@ -131,13 +174,39 @@ it and will not run elsewhere:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\pip install -r requirements.txt
-.\.venv\Scripts\python -m app
+.\.venv\Scripts\pip install -r requirements-native.txt
+.\.venv\Scripts\python -m app.ui
 ```
 
-If the window opens dark and empty, it will say why after a few seconds. The two
-causes it reports are a missing WebView2 runtime (install it and start the
-application again) and an incomplete copy — the whole `web` directory has to come
+### If the window opens black or empty
+
+That is the WebView2 build failing to render. In order of effort:
+
+1. **Use the native build** — `python -m app.ui`, or ship
+   `dist\ProjectAnalysisNative`. It has no browser engine and cannot hit this.
+2. **Install the Edge WebView2 Runtime** on the target machine.
+3. **Bundle a runtime with the app.** Download the *WebView2 Fixed Version
+   Runtime* (x64) from Microsoft, then extract it into `webview2/` at the
+   repository root:
+
+   ```powershell
+   expand.exe Microsoft.WebView2.FixedVersionRuntime.<version>.x64.cab -F:* webview2
+   ```
+
+   The launcher finds `webview2/…/msedgewebview2.exe`, points
+   `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` and pywebview's own
+   `WEBVIEW2_RUNTIME_PATH` at it, and uses that copy regardless of what is
+   installed. `ProjectAnalysis.spec` bundles the folder when it exists. It is
+   about 290 MB and is **not committed** — `.gitignore` excludes `webview2/`
+   and `*.cab`.
+
+Both builds write a log to the data directory
+(`%LOCALAPPDATA%\ProjectAnalysis\app.log` and `app-native.log`). A healthy
+WebView2 start records the runtime in use, `document loaded` and a boot report;
+if `document loaded` never appears, the page never rendered and the cause is the
+engine rather than the interface.
+
+An incomplete copy is the other cause: the whole `web` directory has to come
 along, including `web/vendor`.
 
 ---
@@ -253,17 +322,28 @@ app/
   export/      Mermaid, PlantUML, Markdown, HTML, Draw.io, JSON exporters
   compare/     architecture diffing
   services/    analysis orchestration and AI provider resolution
-  desktop/     the native window and the JavaScript <-> Python bridge
+  desktop/     the WebView2 window and the shared, toolkit-agnostic Api
+  ui/          the native interface (PySide6)
+    theme.py     design tokens and the Qt stylesheet built from them
+    i18n.py      reads web/i18n/*.js, so both interfaces share one set of strings
+    icons.py     reads ICON_PATHS from web/js/dom.js, so both share one icon set
+    charts.py    gauge, donut, radar, bar and line, drawn with QPainter
+    diagram.py   layered graph layout in a QGraphicsView, with zoom and pan
+    score_band.py the overall-score block shared by the dashboard and scorecard
+    palette.py   the command palette
+    motion.py    animation timings ported from the CSS transitions
+    workers.py   runs Api calls off the UI thread
+    views/       one module per screen
   core/        background jobs and caching
   branding.py  name, version, author and icon - one source for the window,
                the About screen and the executable's version resource
 web/
-  index.html   the UI, loaded from disk with file://
+  index.html   the WebView2 UI, loaded from disk with file://
   css/         the design system: tokens, components and layouts
   js/          plain scripts (no bundler, no modules, no CDN)
                app.js views, score.js the scorecard, charts.js the SVG toolkit,
                palette.js the command palette, dom.js the element helpers
-  i18n/        English and Hebrew string bundles
+  i18n/        English and Hebrew string bundles, read by both interfaces
   tests/       the in-browser suite, run inside a real webview
   vendor/      a local copy of Mermaid
 assets/        the generated application icon
@@ -278,17 +358,42 @@ tests/
 .\.venv\Scripts\python -m pytest
 ```
 
+Two audits guard the interfaces:
+
+```powershell
+.\.venv\Scripts\python tools\audit_ui.py        # the WebView2 UI
+.\.venv\Scripts\python tools\audit_i18n.py      # every string key, both languages
+.\.venv\Scripts\python tools\audit_ui_keys.py   # the native UI's keys and placeholders
+```
+
+To compare the two interfaces screen by screen, capture both and read the pairs
+in `build/compare/`:
+
+```powershell
+.\.venv\Scripts\python tools\compare_ui.py --target both
+```
+
 See [docs/testing.md](docs/testing.md) for the static audits and the in-browser
 JS suite. Full documentation lives in [docs/](docs/README.md).
 
 ## Architecture notes
 
-The UI runs inside a native webview loaded from `file://`. Browsers block ES
-modules and `fetch()` for `file://` documents, so the front end is deliberately
-built from plain `<script>` tags with everything exposed on `window.AAI`, and all
-data crosses to Python through `window.pywebview.api`. Each bridge method runs on a
-worker thread and always resolves to `{ok, data}` or `{ok, error}`, so a backend
-failure surfaces as a toast instead of a blank screen.
+`app/desktop/bridge.py` holds the whole application API — one method per
+operation, each returning `{ok, data}` or `{ok, error}` so a backend failure can
+never surface as a blank screen. It imports no UI toolkit: the only calls that
+need a window are the two file dialogs, which sit behind a `FileDialogHost`
+protocol that each front end implements. That is what lets the two interfaces
+share everything else.
+
+The WebView2 UI runs from `file://`, where browsers block ES modules and
+`fetch()`, so it is deliberately built from plain `<script>` tags with everything
+on `window.AAI`, crossing to Python through `window.pywebview.api`.
+
+The native UI calls the same methods directly, from a thread pool. Results are
+marshalled back through a `QObject` that lives on the UI thread — connecting a
+worker signal straight to a plain function gives a *direct* connection, which
+would run the callback on the worker thread and leave the widget unpainted.
+
 
 Every chart is hand-drawn SVG rather than a charting library: gauges, radars,
 lines, bars, donuts, treemaps and heatmaps all come from `web/js/charts.js`, which
@@ -298,6 +403,8 @@ whatever it drew, so a category the reader cannot name is impossible by
 construction rather than by careful sizing. The window chrome is mounted once and
 only the content region re-renders, so navigating between views never restarts an
 animation or steals focus.
-#   P r o j e c t A n a l y s i s  
- #   P r o j e c t A n a l y s i s  
+#   P r o j e c t A n a l y s i s 
+ 
+ #   P r o j e c t A n a l y s i s 
+ 
  
