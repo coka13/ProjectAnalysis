@@ -1,11 +1,12 @@
 # Keyboard shortcuts
 
 `Mod` is `Ctrl` on Windows and Linux, `Cmd` on macOS. Press `Shift + ?` inside the
-app for the same list, generated from the live bindings.
+app for the same list. Both interfaces use these bindings.
 
 | Shortcut | Action |
 | --- | --- |
-| `Mod + Shift + P` | Command palette - reaches every view, action and score category |
+| `Mod + K` | Command palette - reaches every view, action and score category |
+| `Mod + Shift + P` | Command palette (the same thing, for muscle memory) |
 | `Mod + Enter` | Start an analysis of the selected project |
 | `Mod + 1` | Dashboard |
 | `Mod + 2` | Scorecard |
@@ -13,6 +14,8 @@ app for the same list, generated from the live bindings.
 | `Mod + 4` | Diagrams |
 | `Mod + B` | Toggle the sidebar |
 | `Shift + ?` | Show this list |
+
+The native build adds `F5` to reload the current view.
 
 ## Inside dialogs
 

@@ -423,13 +423,37 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- shortcuts
     def _shortcuts(self) -> None:
-        QShortcut(QKeySequence("Ctrl+K"), self, activated=self.open_palette)
-        QShortcut(QKeySequence("Ctrl+B"), self, activated=self.toggle_sidebar)
-        QShortcut(QKeySequence("F5"), self, activated=self.refresh_current)
-        QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.navigate("dashboard"))
-        QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self.navigate("projects"))
-        QShortcut(QKeySequence("Ctrl+3"), self, activated=lambda: self.navigate("analyses"))
-        QShortcut(QKeySequence("Ctrl+,"), self, activated=lambda: self.navigate("settings"))
+        # The same bindings the WebView2 build registers, so muscle memory
+        # carries between the two interfaces.
+        for keys, action in (
+            ("Ctrl+K", self.open_palette),
+            ("Ctrl+Shift+P", self.open_palette),
+            ("Ctrl+Return", self._start_analysis),
+            ("Ctrl+1", lambda: self.navigate("dashboard")),
+            ("Ctrl+2", lambda: self.navigate("scorecard")),
+            ("Ctrl+3", lambda: self.navigate("roadmap")),
+            ("Ctrl+4", lambda: self.navigate("diagrams")),
+            ("Ctrl+B", self.toggle_sidebar),
+            ("Shift+?", self.show_shortcuts),
+            ("F5", self.refresh_current),
+        ):
+            QShortcut(QKeySequence(keys), self, activated=action)
+
+    def show_shortcuts(self) -> None:
+        """The same list the original generates from its live bindings."""
+        rows = (
+            ("Ctrl+K  /  Ctrl+Shift+P", t("palette.title")),
+            ("Ctrl+Enter", t("analysis.start")),
+            ("Ctrl+1", t("nav.dashboard")),
+            ("Ctrl+2", t("nav.scorecard")),
+            ("Ctrl+3", t("nav.roadmap")),
+            ("Ctrl+4", t("nav.diagrams")),
+            ("Ctrl+B", t("a11y.toggleSidebar")),
+            ("Shift+?", t("shortcuts.title")),
+        )
+        QMessageBox.information(
+            self, t("shortcuts.title"), "\n".join(f"{keys}\t{what}" for keys, what in rows)
+        )
 
     def open_palette(self) -> None:
         from app.ui.palette import CommandPalette, build_commands

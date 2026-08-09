@@ -104,7 +104,7 @@ class SettingsView(DataView):
         card.add(
             field(
                 t("shortcuts.title"),
-                button(t("shortcuts.title"), on_click=self._show_shortcuts),
+                button(t("shortcuts.title"), on_click=self.window.show_shortcuts),
             )
         )
         return _scrolled(card)
@@ -121,16 +121,6 @@ class SettingsView(DataView):
         app = QApplication.instance()
         if app is not None:
             apply_appearance(app, self.window)
-
-    def _show_shortcuts(self) -> None:
-        pairs = (
-            ("Ctrl+K", t("palette.title")),
-            ("Ctrl+B", t("a11y.toggleSidebar")),
-            ("F5", t("common.refresh")),
-            ("Ctrl+1 / 2 / 3", t("palette.navigation")),
-            ("Ctrl+,", t("nav.settings")),
-        )
-        self.window.notify("\n".join(f"{keys}    {what}" for keys, what in pairs))
 
     # -------------------------------------------------------------- provider
     def _provider(self) -> QWidget:

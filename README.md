@@ -237,9 +237,9 @@ along, including `web/vendor`.
     OpenAI or any other OpenAI-compatible endpoint), the scoring weights, and
     where the data folder and database live.
 
-Press `Ctrl/Cmd + Shift + P` for the command palette - it reaches every view,
-action and score category from the keyboard. `Ctrl/Cmd + B` toggles the sidebar
-and `Shift + ?` lists every shortcut.
+Press `Ctrl/Cmd + K` for the command palette - it reaches every view, action and
+score category from the keyboard. `Ctrl/Cmd + B` toggles the sidebar and
+`Shift + ?` lists every shortcut. See [docs/shortcuts.md](docs/shortcuts.md).
 
 Use the language selector to switch between English and Hebrew at any time; the
 whole interface flips to RTL for Hebrew. Theme, contrast, chart palette, text
@@ -268,7 +268,7 @@ reason it matters, how to fix it and the evidence behind it. The scorecard also
 reports a **potential score** - what the codebase would reach if every
 recommendation on the improvement plan were carried out.
 
-Weights are yours to change under **Settings → Scoring**. Saving new weights
+Weights are yours to change under **Settings → Score weights**. Saving new weights
 re-scores stored analyses without re-parsing anything, and the values live in
 `scoring_weights.json` inside the data folder. *Reset* restores the defaults above.
 

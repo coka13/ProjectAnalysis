@@ -10,4 +10,13 @@
 | [shortcuts.md](shortcuts.md) | Keyboard reference. |
 | [testing.md](testing.md) | How to run the suites, including the in-browser JS tests. |
 
-The project README covers installation and first run.
+The project [README](../README.md) covers the two interfaces, installation and
+first run. In short:
+
+```powershell
+.\.venv\Scripts\python -m app        # the WebView2 interface
+.\.venv\Scripts\python -m app.ui     # the native interface, no browser engine
+```
+
+Both share every line of analysis, scoring, diagram and export code; only the
+window differs.
