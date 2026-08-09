@@ -45,8 +45,12 @@
   --lh-tight: 1.2;
   --lh-normal: 1.55;
 
-  --font: 'Inter', 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, 'Noto Sans Hebrew', 'Arial', sans-serif;
-  --mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  /* Installed system fonts only. Avoid leading with faces Windows may try to
+     download from its cloud font provider when missing; offline that stalls
+     or substitutes, so the UI looks different with and without a network.
+     Segoe UI already covers Hebrew on typical Windows installs. */
+  --font: 'Segoe UI', system-ui, -apple-system, 'Arial', sans-serif;
+  --mono: 'Consolas', 'Courier New', monospace;
 
   /* motion */
   --t-fast: 110ms cubic-bezier(0.2, 0, 0.2, 1);
@@ -281,13 +285,44 @@ a:hover { text-decoration: underline; }
 .center { text-align: center; }
 .tabular { font-variant-numeric: tabular-nums; }
 
-.row { display: flex; gap: var(--s3); flex-wrap: wrap; align-items: flex-end; }
+.row { display: flex; gap: var(--s3); flex-wrap: wrap; align-items: start; }
+/* Equal columns: without this, a long label or a hint makes one field stretch
+   and the neighbour shrink, which is what made the New project dialog look
+   staggered. */
+.row > .field { flex: 1 1 12rem; min-width: 0; }
 .inline { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
 .stack { display: flex; flex-direction: column; gap: var(--s3); }
 .stack-sm { display: flex; flex-direction: column; gap: var(--s2); }
 .stack-lg { display: flex; flex-direction: column; gap: var(--s5); }
 
-.grid { display: grid; gap: var(--s4); }
+/* Two-column form used by the New project dialog (and any similar modal). */
+.form-grid {
+  display: grid;
+  /* minmax(0, 1fr) beats the default minmax(auto, 1fr), which lets a number
+     input's intrinsic width (from max=200000 etc.) make one column wider. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s4) var(--s4);
+  align-items: start;
+}
+.form-grid > .span-2 { grid-column: 1 / -1; }
+.form-grid .field,
+.form-grid input,
+.form-grid select,
+.form-grid textarea { min-width: 0; width: 100%; }
+@media (max-width: 560px) {
+  .form-grid { grid-template-columns: 1fr; }
+}
+.input-row {
+  display: flex;
+  gap: var(--s2);
+  align-items: stretch;
+  min-width: 0;
+}
+.input-row > input,
+.input-row > select { flex: 1 1 auto; min-width: 0; width: auto; }
+.input-row > .btn { flex: 0 0 auto; align-self: stretch; }
+
+.grid { display: grid; gap: var(--s5); }
 .grid-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
 .grid-3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .grid-4 { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
@@ -434,18 +469,21 @@ textarea[aria-invalid='true']:focus { box-shadow: 0 0 0 3px var(--danger-soft); 
   border-radius: var(--r-lg);
   padding: var(--s5);
   box-shadow: var(--shadow-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
 }
-.card.flush { padding: 0; overflow: hidden; }
-.card.tight { padding: var(--s4); }
+.card.flush { padding: 0; overflow: hidden; gap: 0; }
+.card.tight { padding: var(--s4); gap: var(--s3); }
 .card-head {
   display: flex;
   align-items: center;
   gap: var(--s3);
   padding-block-end: var(--s3);
-  margin-block-end: var(--s4);
+  margin-block-end: 0;
   border-block-end: 1px solid var(--line-soft);
 }
-.card-head.plain { border: 0; margin-block-end: var(--s3); padding-block-end: 0; }
+.card-head.plain { border: 0; margin-block-end: 0; padding-block-end: 0; }
 .card-head h3 { flex: 1; min-width: 0; }
 .panel { background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: var(--s4); }
 
@@ -598,7 +636,7 @@ details[open] > summary::before { transform: rotate(90deg); }
 
 .nav-group-title {
   padding: var(--s3) var(--s3) var(--s1);
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--f-xs);
   font-weight: 700;
   letter-spacing: 0.07em;
@@ -612,7 +650,7 @@ details[open] > summary::before { transform: rotate(90deg); }
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
-  color: var(--text-2);
+  color: var(--text);
   font: inherit;
   font-size: var(--f-sm);
   font-weight: 500;
@@ -650,11 +688,11 @@ details[open] > summary::before { transform: rotate(90deg); }
   padding: 0 6px;
   border-radius: var(--r-full);
   background: var(--muted-soft);
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--f-xs);
   font-weight: 600;
 }
-.nav-item[disabled] { opacity: 0.4; cursor: not-allowed; }
+.nav-item[disabled] { opacity: 0.55; cursor: not-allowed; }
 
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 
@@ -715,7 +753,7 @@ details[open] > summary::before { transform: rotate(90deg); }
   text-align: center;
   line-height: 1;
 }
-.score-dial .value b { font-size: var(--f-4xl); font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.score-dial .value b { font-size: var(--f-3xl); font-weight: 700; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 .score-dial .value .of { font-size: var(--f-sm); color: var(--text-3); margin-block-start: var(--s1); }
 .score-dial .value .grade { margin-block-start: var(--s2); font-size: var(--f-sm); font-weight: 700; }
 
@@ -750,7 +788,7 @@ details[open] > summary::before { transform: rotate(90deg); }
 .score-card .top { display: flex; align-items: center; gap: var(--s2); }
 .score-card .name { flex: 1; font-size: var(--f-sm); font-weight: 600; color: var(--text-2); }
 .score-card .num { display: flex; align-items: baseline; gap: var(--s1); }
-.score-card .num b { font-size: var(--f-3xl); font-weight: 700; letter-spacing: -0.03em; color: var(--band); font-variant-numeric: tabular-nums; }
+.score-card .num b { font-size: var(--f-2xl); font-weight: 700; letter-spacing: -0.03em; color: var(--band); font-variant-numeric: tabular-nums; }
 .score-card .num span { font-size: var(--f-sm); color: var(--text-3); }
 .score-card .foot { display: flex; align-items: center; gap: var(--s2); font-size: var(--f-xs); color: var(--text-3); }
 
@@ -860,7 +898,7 @@ details[open] > summary::before { transform: rotate(90deg); }
   background: var(--ok-soft);
   color: var(--ok);
 }
-.action .gain b { font-size: var(--f-lg); font-weight: 700; font-variant-numeric: tabular-nums; }
+.action .gain b { font-size: var(--f-md); font-weight: 700; font-variant-numeric: tabular-nums; }
 .action .gain span { font-size: var(--f-xs); opacity: 0.85; }
 .action h4 { margin-block-end: var(--s1); }
 .action .meta { display: flex; gap: var(--s2); flex-wrap: wrap; margin-block-start: var(--s3); }
@@ -872,6 +910,8 @@ details[open] > summary::before { transform: rotate(90deg); }
 
 /* ------------------------------------------------------------------ charts */
 .chart { position: relative; width: 100%; }
+.chart.chart-treemap,
+.chart.chart-heatmap { max-width: none; }
 /* Only the chart's own canvas stretches. Without the :not(.ico) guard this rule
    also matched any icon rendered inside a chart panel and blew an 18px glyph up
    to the full panel width. */
@@ -889,7 +929,9 @@ details[open] > summary::before { transform: rotate(90deg); }
    its own first strong character, so a Hebrew name reads right-to-left while an
    English one beside it still reads left-to-right. */
 .chart text { unicode-bidi: plaintext; }
-.chart .axis text { fill: var(--text-3); font-size: 10px; font-family: var(--font); }
+/* Sizes come from the svg font-size attribute (viewBox units) so text scales
+   with the geometry. Do not set CSS px/em here — that fought width:100%. */
+.chart .axis text { fill: var(--text-3); font-family: var(--font); }
 .chart .axis line, .chart .axis path { stroke: var(--line); }
 .chart .gridline { stroke: var(--grid-line); stroke-width: 1; }
 .chart .series-line { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -898,7 +940,7 @@ details[open] > summary::before { transform: rotate(90deg); }
 .chart .bar { transition: opacity var(--t-fast); cursor: pointer; }
 .chart .bar:hover, .chart .cell:hover { opacity: 0.78; }
 .chart .cell { cursor: pointer; transition: opacity var(--t-fast); }
-.chart .label { fill: var(--text-2); font-size: 11px; font-family: var(--font); }
+.chart .label { fill: var(--text-2); font-family: var(--font); }
 /* Axis labels are hoverable (they carry the value tooltip), so they must not
    swallow the pointer for the shapes underneath, only for themselves. */
 .chart text.axis-label { pointer-events: visiblePainted; }
@@ -911,7 +953,7 @@ details[open] > summary::before { transform: rotate(90deg); }
   stroke-width: 2.5px;
   stroke-linejoin: round;
 }
-.chart .value-label { fill: var(--text); font-size: 11px; font-weight: 600; font-family: var(--font); }
+.chart .value-label { fill: var(--text); font-weight: 600; font-family: var(--font); }
 .chart .dim-series { opacity: 0.18; }
 
 .chart-tip {
@@ -954,9 +996,34 @@ details[open] > summary::before { transform: rotate(90deg); }
 .legend-item.off { opacity: 0.4; text-decoration: line-through; }
 .legend-item .sw { width: 9px; height: 9px; border-radius: 2px; }
 
-.chart-frame { display: flex; flex-direction: column; gap: var(--s2); }
-.chart-frame .chart-head { display: flex; align-items: center; gap: var(--s3); }
-.chart-frame .chart-head h4 { flex: 1; }
+.chart-frame { display: flex; flex-direction: column; gap: var(--s3); }
+.chart-frame .chart-head { display: flex; align-items: baseline; gap: var(--s3); flex-wrap: wrap; }
+.chart-frame .chart-head h4 { flex: 1; min-width: 0; margin: 0; font-size: var(--f-md); font-weight: 600; }
+
+/* Chart bodies inside cards: even padding and centred radar. */
+.radar-wrap,
+.chart-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: var(--s4) var(--s2);
+  min-height: 0;
+}
+.radar-wrap .chart,
+.chart-wrap .chart { width: 100%; max-width: 420px; margin-inline: auto; }
+.chart-wrap .chart { max-width: 100%; }
+
+/* Nested settings group: timeout / retries / actions sit in one panel. */
+.settings-subpanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+  padding: var(--s5);
+}
+.settings-subpanel .settings-actions { margin-block-start: 0; }
+.settings-subpanel .form-grid { gap: var(--s4); }
+.settings-subpanel .form-grid > .field { min-width: 0; }
+.settings-subpanel input[type='number'] { width: 100%; min-width: 0; }
 
 /* ---------------------------------------------------------------- git graph */
 .gitgraph { display: flex; flex-direction: column; min-height: 0; }
@@ -1392,11 +1459,12 @@ body.overlay-open .content { overflow: hidden; }
 .list-item.active { border-color: var(--accent); background: var(--accent-soft); }
 .list-item .main { flex: 1; min-width: 0; }
 
-.tabs { display: flex; gap: var(--s1); border-block-end: 1px solid var(--line); overflow-x: auto; }
+.tabs { display: flex; gap: var(--s1); border-block-end: 1px solid var(--line); overflow-x: auto; scrollbar-width: thin; }
 .tab {
   padding: var(--s2) var(--s4);
   border: 0;
   border-block-end: 2px solid transparent;
+  margin-block-end: -1px;
   background: none;
   color: var(--text-2);
   font: inherit;
@@ -1408,24 +1476,112 @@ body.overlay-open .content { overflow: hidden; }
 }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--accent); border-block-end-color: var(--accent); font-weight: 600; }
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* Settings: tab strip + panel, so switching tabs does not jump the page. */
+.settings-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s5);
+  max-width: 920px;
+}
+.settings-tabs {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
+  background: var(--bg);
+  margin-inline: calc(var(--s6) * -1);
+  padding-inline: var(--s6);
+}
+.settings-body { min-width: 0; }
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s4) var(--s5);
+  align-items: start;
+}
+.settings-grid > .span-2 { grid-column: 1 / -1; }
+.settings-grid .field,
+.settings-grid input,
+.settings-grid select { min-width: 0; width: 100%; }
+.settings-actions { margin-block-start: var(--s4); }
+@media (max-width: 720px) {
+  .settings-grid { grid-template-columns: 1fr; }
+  .settings-tabs { margin-inline: calc(var(--s4) * -1); padding-inline: var(--s4); }
+}
+
+/* One shared grid so every slider, badge and "default N%" line up. Each row
+   uses display:contents so its children become cells of this grid. */
+.weight-list {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr) 3.25rem 6.75rem;
+  column-gap: var(--s3);
+  row-gap: var(--s4);
+  align-items: center;
+}
+.weight-row { display: contents; }
+.weight-name {
+  font-size: var(--f-sm);
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.weight-slider { min-width: 0; }
+.weight-slider input[type='range'] { width: 100%; display: block; }
+.weight-row .badge {
+  justify-self: stretch;
+  text-align: center;
+  min-width: 0;
+}
+.weight-default {
+  white-space: nowrap;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 640px) {
+  .weight-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+  }
+  .weight-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 3.25rem;
+    gap: var(--s2) var(--s3);
+    align-items: center;
+  }
+  .weight-slider { grid-column: 1 / -1; }
+  .weight-default { grid-column: 1 / -1; text-align: start; }
+}
 
 .chips { display: flex; gap: var(--s2); flex-wrap: wrap; }
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--s1);
-  padding: 3px 10px;
+  padding: 5px 12px;
+  min-height: 28px;
   border: 1px solid var(--line);
   border-radius: var(--r-full);
   background: var(--surface-2);
   color: var(--text-2);
   font: inherit;
-  font-size: var(--f-xs);
+  font-size: var(--f-sm);
   cursor: pointer;
   transition: all var(--t-fast);
 }
 .chip:hover { border-color: var(--line-strong); color: var(--text); }
 .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* --------------------------------------------------------------- diagrams */
 .viewer { display: flex; flex-direction: column; gap: var(--s2); }
@@ -1506,7 +1662,7 @@ body.overlay-open .content { overflow: hidden; }
   border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
 }
-.kpi-tile b { display: block; font-size: var(--f-2xl); font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.kpi-tile b { display: block; font-size: var(--f-xl); font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .kpi-tile span { display: block; margin-block-start: var(--s1); font-size: var(--f-xs); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; }
 
 /* ------------------------------------------------- self-explaining metrics */
@@ -1523,7 +1679,7 @@ body.overlay-open .content { overflow: hidden; }
   border-radius: var(--r-md);
 }
 .metric-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
-.metric-head b { font-size: var(--f-2xl); font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.metric-head b { font-size: var(--f-xl); font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .metric-name { font-size: var(--f-xs); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.05em; }
 .metric-reading { margin-block-start: var(--s1); font-size: var(--f-sm); color: var(--text); }
 .metric-reading.tone-good { color: var(--ok); }
@@ -1652,7 +1808,26 @@ body.overlay-open .content { overflow: hidden; }
   animation-delay: calc(var(--i, 0) * 45ms);
 }
 .mag-fill.tone-bad { background: var(--danger); }
-.mag-value { font-size: var(--f-xs); color: var(--text-3); white-space: nowrap; }
+.mag-value { font-size: var(--f-xs); color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* Score projection: same type scale as the plan cards below it. */
+.projection-list { gap: var(--s3); max-width: 40rem; }
+.projection-list .mag-row {
+  grid-template-columns: minmax(7.5rem, 10rem) minmax(0, 1fr) 4.5rem;
+}
+.projection-list .mag-label {
+  font-family: var(--font);
+  font-size: var(--f-sm);
+  font-weight: 500;
+  color: var(--text);
+}
+.projection-list .mag-value {
+  font-size: var(--f-sm);
+  font-weight: 600;
+  color: var(--text);
+  text-align: end;
+}
+.projection-list .mag-track { height: 8px; }
 
 .all-clear { display: flex; align-items: center; gap: var(--s3); color: var(--ok); margin-block-start: var(--s3); }
 .all-clear p { color: var(--text-2); }
@@ -1785,7 +1960,7 @@ tr.clickable:hover td { background: var(--surface-2); }
 tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .badge.xs { padding: 0 5px; font-size: 0.625rem; }
-.nav-item.locked { opacity: 0.55; }
+.nav-item.locked { opacity: 0.78; color: var(--text-2); }
 
 .boot {
   display: grid;

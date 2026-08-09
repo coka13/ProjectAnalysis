@@ -82,6 +82,10 @@
     trendFor: null,
     files: null,
     filesFor: null,
+    fixes: null,          // last Guided Fixes payload
+    fixesKey: null,       // analysis|language|cosmetic key the payload belongs to
+    fixesCosmetic: false, // remembered "include formatting" toggle
+    settingsTab: 'appearance',
   };
 
   const DIAGRAM_KINDS = [
@@ -210,6 +214,16 @@
     state.filesFor = null;
     state.trend = null;
     state.trendFor = null;
+    invalidateFixes();
+  }
+
+  function invalidateFixes() {
+    state.fixes = null;
+    state.fixesKey = null;
+  }
+
+  function fixesCacheKey(includeCosmetic) {
+    return `${state.analysisId}|${i18n.language()}|${includeCosmetic ? 1 : 0}`;
   }
 
   /** Fetch (and memoise) the scorecard for the selected analysis. */
@@ -728,7 +742,7 @@
               el('h3', { class: 'grow truncate' }, project.name),
               latest ? el('span', { class: `badge ${badgeFor(latest.status)}` }, t(`status.${latest.status}`)) : null),
             el('p', { class: 'small muted mono truncate', title: project.source_location },
-              `${project.source_kind}: ${project.source_location}`),
+              `${project.source_kind === 'git' ? t('project.sourceGit') : t('project.sourceLocal')}: ${project.source_location}`),
             latest
               ? el('p', { class: 'small muted' }, `${t('project.lastRun')}: ${fmtDate(latest.created_at)}`)
               : el('p', { class: 'small dim' }, t('project.neverRun')),
@@ -787,6 +801,7 @@
 
   function projectDialog() {
     const name = el('input', { type: 'text', autofocus: true, maxlength: '160' });
+    const gitHint = el('p', { class: 'small muted span-2', hidden: true }, t('project.gitNetworkHint'));
     const kind = el(
       'select',
       {
@@ -794,13 +809,14 @@
           const local = kind.value === 'local';
           browse.style.display = local ? '' : 'none';
           location.placeholder = local ? 'C:\\path\\to\\project' : 'https://github.com/owner/repo.git';
+          gitHint.hidden = local;
           setFieldError(location, '');
         },
       },
       el('option', { value: 'local' }, t('project.sourceLocal')),
       el('option', { value: 'git' }, t('project.sourceGit')),
     );
-    const location = el('input', { type: 'text', placeholder: 'C:\\path\\to\\project' });
+    const location = el('input', { type: 'text', placeholder: 'C:\\path\\to\\project', required: true });
     const browse = el(
       'button',
       {
@@ -832,18 +848,18 @@
       t('project.create'),
       el(
         'div',
-        { class: 'stack' },
-        el('div', { class: 'row' },
-          field(t('project.name'), name, { required: true }),
-          field(t('project.sourceKind'), kind)),
-        el('div', { class: 'row' },
-          el('div', { class: 'field grow' },
-            el('label', {}, t('project.location'), el('span', { class: 'req', 'aria-hidden': 'true' }, '*')),
-            location),
-          el('div', { class: 'field' }, el('label', {}, '\u00a0'), browse)),
-        el('div', { class: 'row' },
-          field(`${t('project.ref')} (${t('common.optional')})`, ref),
-          field(t('project.exclude'), exclude, { hint: t('project.excludeHint') })),
+        { class: 'form-grid' },
+        field(t('project.name'), name, { required: true }),
+        field(t('project.sourceKind'), kind),
+        gitHint,
+        el(
+          'div',
+          { class: 'field span-2' },
+          el('label', {}, t('project.location'), el('span', { class: 'req', 'aria-hidden': 'true' }, '*')),
+          el('div', { class: 'input-row' }, location, browse),
+        ),
+        field(`${t('project.ref')} (${t('common.optional')})`, ref),
+        field(t('project.exclude'), exclude, { hint: t('project.excludeHint') }),
       ),
       [
         { label: t('common.cancel'), onClick: (close) => close() },
@@ -1188,18 +1204,40 @@
       .then((payload) => {
         const scorecard = payload.scorecard;
         const plan = scorecard.roadmap || {};
-        const projection = charts.bars({
-          items: [
-            { label: t('score.current'), value: scorecard.overall, color: charts.scoreColor(scorecard.overall) },
-            { label: t('score.afterQuickWins'), value: Math.min(100, Math.round(scorecard.overall + sumGain(plan.quick_wins))), color: 'var(--info)' },
-            { label: t('score.afterAll'), value: scorecard.potential_score, color: 'var(--ok)' },
-          ],
-          max: 100,
-          unit: ' / 100',
-          width: 640,
-        });
+        const projection = el(
+          'div',
+          { class: 'chart-frame' },
+          el('div', { class: 'chart-head' },
+            el('h4', {}, t('score.projection')),
+            el('span', { class: 'small dim' }, t('score.projectionHint'))),
+          el(
+            'div',
+            { class: 'mag-list projection-list' },
+            magnitudeRow({
+              label: t('score.current'),
+              value: scorecard.overall,
+              max: 100,
+              display: `${scorecard.overall} / 100`,
+              color: charts.scoreColor(scorecard.overall),
+            }, 0),
+            magnitudeRow({
+              label: t('score.afterQuickWins'),
+              value: Math.min(100, Math.round(scorecard.overall + sumGain(plan.quick_wins))),
+              max: 100,
+              display: `${Math.min(100, Math.round(scorecard.overall + sumGain(plan.quick_wins)))} / 100`,
+              color: 'var(--info)',
+            }, 1),
+            magnitudeRow({
+              label: t('score.afterAll'),
+              value: scorecard.potential_score,
+              max: 100,
+              display: `${scorecard.potential_score} / 100`,
+              color: 'var(--ok)',
+            }, 2),
+          ),
+        );
         clear(body).append(
-          card(null, {}, charts.panel(t('score.projection'), projection, { subtitle: t('score.projectionHint') })),
+          card(null, {}, projection),
           score.roadmap(scorecard),
         );
         i18n.applyStatic(body);
@@ -2019,11 +2057,21 @@
       el('ul', {}, ...lines.map((line) => el('li', {}, line))));
   }
 
+  function insightSourceNotice(result) {
+    if (!result || result.source === 'ai') return null;
+    if (result.warning) {
+      return el('div', { class: 'notice warn', role: 'note' },
+        icon('alert', { size: 16 }),
+        el('p', {}, t('ai.fallbackFailed', { error: result.warning })));
+    }
+    return el('p', { class: 'small muted' }, t('ai.fallbackNotice'));
+  }
+
   function renderExplanation(result) {
     return el(
       'div',
       { style: 'margin-top:12px' },
-      result.source === 'static' ? el('p', { class: 'small muted' }, t('ai.fallbackNotice')) : null,
+      insightSourceNotice(result),
       section(t('ai.purpose'), result.purpose),
       section(t('ai.description'), result.description),
       bulletSection(t('ai.keyComponents'), (result.key_components || []).map(describeComponent)),
@@ -2035,7 +2083,7 @@
 
   function renderReview(result) {
     return card(t('ai.review'), { icon: 'report' },
-      result.source === 'static' ? el('p', { class: 'small muted' }, t('ai.fallbackNotice')) : null,
+      insightSourceNotice(result),
       section(t('compare.summary'), result.summary),
       bulletSection(t('ai.strengths'), result.strengths),
       bulletSection(t('ai.issues'), (result.issues || []).map(describe)),
@@ -2044,7 +2092,7 @@
 
   function renderRefactor(result) {
     return card(t('ai.refactor'), { icon: 'wrench' },
-      result.source === 'static' ? el('p', { class: 'small muted' }, t('ai.fallbackNotice')) : null,
+      insightSourceNotice(result),
       section(t('compare.summary'), result.summary),
       el('div', { class: 'stack' }, ...(result.suggestions || []).map((item) =>
         el('div', { class: 'panel' },
@@ -2159,12 +2207,13 @@
   /** A labelled bar whose length is the value relative to the worst case. */
   function magnitudeRow(spec, index) {
     const share = Math.max(4, Math.round((spec.value / (spec.max || 1)) * 100));
+    const fillStyle = `--mag:${share}%${spec.color ? `;background:${spec.color}` : ''}`;
     return el(
       'div',
       { class: 'mag-row', style: `--i:${index}` },
       el('span', { class: 'mag-label truncate', title: spec.label }, spec.label),
       el('span', { class: 'mag-track' },
-        el('span', { class: `mag-fill tone-${spec.tone || 'watch'}`, style: `--mag:${share}%` })),
+        el('span', { class: `mag-fill tone-${spec.tone || 'watch'}`, style: fillStyle })),
       el('span', { class: 'mag-value' }, spec.display),
     );
   }
@@ -2350,40 +2399,78 @@
   }
 
   function viewFixes(host) {
-    host.append(pageHead(t('nav.fixes'), t('fixes.subtitle'), []));
+    const refreshBtn = el(
+      'button',
+      {
+        class: 'btn',
+        type: 'button',
+        onclick: () => load(true),
+      },
+      icon('refresh', { size: 14 }),
+      t('common.refresh'),
+    );
+    host.append(pageHead(t('nav.fixes'), t('fixes.subtitle'), [refreshBtn]));
     if (!analysisReady()) { needsAnalysisState(host); return; }
 
-    const body = el('div', { class: 'stack-lg' }, skeleton('block'), skeleton('line', 5));
+    const body = el('div', { class: 'stack-lg' });
     host.append(body);
 
     // Selection lives outside the render so filtering never loses ticks.
     const selected = new Set();
     let proposals = [];
-    let includeCosmetic = false;
+    let includeCosmetic = !!state.fixesCosmetic;
+    let payload = null;
 
-    function load() {
+    function load(force) {
+      state.fixesCosmetic = includeCosmetic;
+      const key = fixesCacheKey(includeCosmetic);
+      if (!force && state.fixes && state.fixesKey === key) {
+        payload = state.fixes;
+        proposals = (payload && payload.proposals) || [];
+        selected.clear();
+        paint(payload);
+        return;
+      }
+
       clear(body).append(skeleton('block'), skeleton('line', 5));
+      refreshBtn.disabled = true;
+      refreshBtn.setAttribute('aria-busy', 'true');
       api
         .fixProposals(state.analysisId, 200, { includeCosmetic, language: i18n.language() })
-        .then((payload) => {
+        .then((result) => {
           if (!body.isConnected) return;
-          proposals = (payload && payload.proposals) || [];
+          state.fixes = result;
+          state.fixesKey = key;
+          payload = result;
+          proposals = (result && result.proposals) || [];
           selected.clear();
-          paint(payload);
+          paint(result);
         })
         .catch((error) => {
           if (!body.isConnected) return;
           clear(body).append(errorState(error, t('nav.fixes')));
+        })
+        .finally(() => {
+          refreshBtn.disabled = false;
+          refreshBtn.removeAttribute('aria-busy');
         });
     }
 
-    function paint(payload) {
+    function paint(nextPayload) {
+      payload = nextPayload;
       const autoFixable = proposals.filter((p) => p.auto_fixable);
       const advisory = proposals.filter((p) => !p.auto_fixable);
       const structural = proposals.filter((p) => p.kind === 'structural');
       const files = new Set(proposals.map((p) => p.file).filter(Boolean));
       const aiOn = !!(payload && payload.ai_available);
       const patched = (payload && payload.ai_patched) || 0;
+      const attempted = (payload && payload.ai_attempted) || 0;
+      const failed = (payload && payload.ai_failed) || 0;
+      const modeCopy = aiOn
+        ? (attempted
+          ? t('fixes.modeAiStats', { n: patched, attempted, failed })
+          : t('fixes.modeAi', { n: patched }))
+        : t('fixes.modeOffline');
 
       clear(body);
       // `el()` drops null children, but this is the native DOM method, which
@@ -2397,7 +2484,7 @@
         // would add - otherwise a short list looks like a broken feature.
         el('div', { class: `notice ${aiOn ? 'ok' : ''}`, role: 'note' },
           icon(aiOn ? 'sparkle' : 'shield', { size: 16 }),
-          el('p', {}, aiOn ? t('fixes.modeAi', { n: patched }) : t('fixes.modeOffline'))),
+          el('p', {}, modeCopy)),
         payload && payload.ai_error
           ? el('div', { class: 'notice warn', role: 'note' }, icon('alert', { size: 16 }),
               el('p', {}, t('fixes.aiFailed', { error: payload.ai_error })))
@@ -2446,7 +2533,7 @@
       const cosmeticToggle = el('input', {
         type: 'checkbox',
         checked: includeCosmetic,
-        onchange: (ev) => { includeCosmetic = ev.currentTarget.checked; load(); },
+        onchange: (ev) => { includeCosmetic = ev.currentTarget.checked; load(false); },
       });
 
       function renderList() {
@@ -2568,7 +2655,8 @@
                 } else {
                   toast(t('fixes.applied', { n: result.applied_files }), 'ok');
                 }
-                load();
+                invalidateFixes();
+                load(true);
               })
               .catch((error) => {
                 applyBtn.removeAttribute('aria-busy');
@@ -2611,7 +2699,7 @@
       i18n.applyStatic(body);
     }
 
-    load();
+    load(false);
   }
 
   /* ===================================================================== */
@@ -2952,9 +3040,9 @@
 
   function viewSettings(host) {
     host.append(pageHead(t('nav.settings'), t('settings.subtitle'), []));
-    let tab = 'appearance';
-    const tabHost = el('div');
-    const body = el('div', { style: 'margin-top:16px' });
+    const panel = el('div', { class: 'settings-layout' });
+    const tabHost = el('div', { class: 'settings-tabs' });
+    const body = el('div', { class: 'settings-body', role: 'tabpanel' });
 
     const items = () => [
       { id: 'appearance', label: t('settings.appearance') },
@@ -2963,9 +3051,13 @@
       { id: 'storage', label: t('settings.storage') },
     ];
     const draw = () => {
-      clear(tabHost).append(tabs(items(), tab, (next) => { tab = next; draw(); }));
+      const tab = state.settingsTab || 'appearance';
+      clear(tabHost).append(tabs(items(), tab, (next) => {
+        state.settingsTab = next;
+        draw();
+      }));
       clear(body);
-      if (tab === 'appearance') body.append(appearanceSettings());
+      if (tab === 'appearance') body.append(appearanceSettings(draw));
       else if (tab === 'provider') body.append(providerSettings());
       else if (tab === 'storage') body.append(storageSettings());
       else body.append(card(t('score.weights'), { icon: 'gauge' }, score.weightsEditor(() => {
@@ -2974,7 +3066,7 @@
       i18n.applyStatic(body);
     };
     draw();
-    host.append(tabHost, body);
+    host.append(append(panel, tabHost, body));
   }
 
   /** Where the app keeps its files. Operational detail, so it lives in
@@ -2996,17 +3088,25 @@
     return host;
   }
 
-  function appearanceSettings() {
-    const choice = (key, options, current, onPick) =>
-      el('div', { class: 'chips' }, ...options.map((option) =>
+  function appearanceSettings(redraw) {
+    const choice = (key, options, current) =>
+      el('div', { class: 'chips', role: 'group' }, ...options.map((option) =>
         el('button', {
           type: 'button',
           class: `chip ${current === option.value ? 'on' : ''}`,
-          onclick: () => { setPref(key, option.value); applyPreferences(); refreshTheme(); renderView(); if (onPick) onPick(); },
+          'aria-pressed': current === option.value ? 'true' : 'false',
+          onclick: () => {
+            setPref(key, option.value);
+            applyPreferences();
+            refreshTheme();
+            // Stay on this settings tab; only rebuild the panel.
+            if (typeof redraw === 'function') redraw();
+            else renderView();
+          },
         }, option.label)));
 
     return card(t('settings.appearance'), { icon: 'settings' },
-      el('div', { class: 'stack' },
+      el('div', { class: 'settings-grid' },
         el('div', { class: 'field' },
           el('label', {}, t('common.theme')),
           choice('theme', [
@@ -3041,13 +3141,14 @@
           ], pref('scale', '1'))),
         el('div', { class: 'field' },
           el('label', {}, t('common.language')),
-          el('div', { class: 'chips' }, ...i18n.SUPPORTED.map((language) =>
+          el('div', { class: 'chips', role: 'group' }, ...i18n.SUPPORTED.map((language) =>
             el('button', {
               type: 'button',
               class: `chip ${i18n.language() === language.code ? 'on' : ''}`,
+              'aria-pressed': i18n.language() === language.code ? 'true' : 'false',
               onclick: () => i18n.setLanguage(language.code),
             }, language.label)))),
-        el('div', { class: 'field' },
+        el('div', { class: 'field span-2' },
           el('label', {}, t('shortcuts.title')),
           el('button', { class: 'btn', onclick: () => palette.help() }, t('shortcuts.show'))),
       ));
@@ -3060,7 +3161,11 @@
       let config = {};
       try { config = (await api.provider()) || {}; } catch (error) { handle(error); }
 
-      const baseUrl = el('input', { type: 'url', value: config.base_url || 'http://localhost:11434/v1' });
+      const baseUrl = el('input', {
+        type: 'url',
+        value: config.base_url || '',
+        placeholder: 'http://localhost:11434/v1',
+      });
       const model = el('input', { type: 'text', value: config.model || '' });
       const apiKey = el('input', { type: 'password', placeholder: config.api_key_masked || '' });
       const headers = el('textarea', {}, JSON.stringify(config.headers || {}, null, 2));
@@ -3091,47 +3196,61 @@
 
       clear(host).append(
         card(t('provider.title'), { icon: 'sparkle' },
-          el('p', { class: 'muted small' }, t('provider.hint')),
-          config.source === 'environment' ? el('p', { class: 'small muted mono' }, '.env') : null,
-          field(t('provider.baseUrl'), baseUrl),
-          el('div', { class: 'row' }, field(t('provider.model'), model), field(t('provider.apiKey'), apiKey)),
-          el('p', { class: 'muted small' }, t('provider.apiKeyKeep')),
-          field(t('provider.headers'), headers),
-          el('div', { class: 'row' },
-            field(t('provider.temperature'), temperature),
-            field(t('provider.maxTokens'), maxTokens),
-            field(t('provider.timeout'), timeout),
-            field(t('provider.retries'), retries),
-            el('label', { class: 'check' }, streaming, el('span', {}, t('provider.streaming')))),
-          el('div', { class: 'inline', style: 'margin-top:14px' },
-            el('button', {
-              class: 'btn primary',
-              onclick: async () => {
-                try { await api.saveProvider(payload()); toast(t('common.saved'), 'success'); draw(); }
-                catch (error) { handle(error); }
-              },
-            }, t('common.save')),
-            el('button', {
-              class: 'btn',
-              onclick: async (event) => {
-                const button = event.currentTarget;
-                button.disabled = true;
-                clear(result).append(spinner());
-                try {
-                  const probe = await api.testProvider();
-                  clear(result).append(el('span', { class: `badge ${probe.ok ? 'ok' : 'err'}` },
-                    probe.ok ? t('provider.ok', { ms: probe.latency_ms }) : probe.error || t('common.error')));
-                } catch (error) { handle(error); clear(result); } finally { button.disabled = false; }
-              },
-            }, t('provider.test')),
-            el('button', {
-              class: 'btn danger',
-              onclick: () => confirmDialog(t('provider.clear'), async () => {
-                try { await api.clearProvider(); toast(t('common.saved'), 'success'); draw(); }
-                catch (error) { handle(error); }
-              }),
-            }, t('provider.clear')),
-            result)),
+          el(
+            'div',
+            { class: 'stack-lg' },
+            el('p', { class: 'muted small' }, t('provider.hint')),
+            config.source === 'environment' ? el('p', { class: 'small muted mono' }, '.env') : null,
+            el('div', { class: 'form-grid' },
+              el('div', { class: 'field span-2' },
+                el('label', {}, t('provider.baseUrl')),
+                baseUrl),
+              field(t('provider.model'), model),
+              field(t('provider.apiKey'), apiKey, { hint: t('provider.apiKeyKeep') }),
+              el('div', { class: 'field span-2' },
+                el('label', {}, t('provider.headers')),
+                headers)),
+            el(
+              'div',
+              { class: 'panel settings-subpanel' },
+              el('div', { class: 'form-grid' },
+                field(t('provider.temperature'), temperature),
+                field(t('provider.maxTokens'), maxTokens),
+                field(t('provider.timeout'), timeout),
+                field(t('provider.retries'), retries)),
+              el('label', { class: 'check' }, streaming, el('span', {}, t('provider.streaming'))),
+              el('div', { class: 'inline settings-actions' },
+                el('button', {
+                  class: 'btn primary',
+                  onclick: async () => {
+                    try { await api.saveProvider(payload()); toast(t('common.saved'), 'success'); draw(); }
+                    catch (error) { handle(error); }
+                  },
+                }, t('common.save')),
+                el('button', {
+                  class: 'btn',
+                  onclick: async (event) => {
+                    const button = event.currentTarget;
+                    button.disabled = true;
+                    clear(result).append(spinner());
+                    try {
+                      const probe = await api.testProvider();
+                      clear(result).append(el('span', { class: `badge ${probe.ok ? 'ok' : 'err'}` },
+                        probe.ok ? t('provider.ok', { ms: probe.latency_ms }) : probe.error || t('common.error')));
+                    } catch (error) { handle(error); clear(result); } finally { button.disabled = false; }
+                  },
+                }, t('provider.test')),
+                el('button', {
+                  class: 'btn danger',
+                  onclick: () => confirmDialog(t('provider.clear'), async () => {
+                    try { await api.clearProvider(); toast(t('common.saved'), 'success'); draw(); }
+                    catch (error) { handle(error); }
+                  }),
+                }, t('provider.clear')),
+                result),
+            ),
+          ),
+        ),
       );
       i18n.applyStatic(host);
     };

@@ -46,14 +46,20 @@
     return node;
   }
 
-  function frame(width, height, className) {
+  function frame(width, height, className, options) {
+    const opt = options || {};
     const node = document.createElement('div');
     node.className = `chart ${className || ''}`;
+    // Cap display size to the design width so a short bar chart cannot stretch
+    // to the full card and blow every label up past the surrounding UI type.
+    // Area charts (treemap / heatmap) pass fluid:true and fill the card instead.
+    if (!opt.fluid) node.style.maxWidth = `${width}px`;
     const svg = s('svg', {
       viewBox: `0 0 ${width} ${height}`,
-      preserveAspectRatio: 'xMidYMid meet',
+      preserveAspectRatio: opt.fluid ? 'xMinYMid meet' : 'xMidYMid meet',
       role: 'img',
       focusable: 'false',
+      'font-size': 11,
     });
     node.append(svg);
     return { node, svg };
@@ -143,7 +149,9 @@
 
   /** A <text> holding one <tspan> per line, plus a native tooltip. */
   function textBlock(lines, attrs, lineHeight, fullText) {
-    const node = s('text', attrs);
+    // Always stamp a user-unit font-size so CSS rem/em from the page cannot
+    // override and make labels disagree with the surrounding UI.
+    const node = s('text', Object.assign({ 'font-size': 11 }, attrs));
     lines.forEach((line, index) => {
       const span = s('tspan', { x: attrs.x, dy: index === 0 ? 0 : lineHeight });
       span.textContent = line;
@@ -534,9 +542,9 @@
       options,
     );
     const items = opt.items || [];
-    const rowH = 26;
+    const rowH = 28;
     const pad = opt.horizontal
-      ? { top: 8, right: 56, bottom: 8, left: Math.min(220, Math.max(90, ...items.map((i) => String(i.label).length * 6.2))) }
+      ? { top: 8, right: 52, bottom: 8, left: Math.min(200, Math.max(80, ...items.map((i) => String(i.label).length * 5.6))) }
       : { top: 16, right: 12, bottom: 46, left: 44 };
     const height = opt.height || (opt.horizontal ? pad.top + pad.bottom + items.length * rowH : 260);
     const { node, svg } = frame(opt.width, Math.max(height, 60), 'chart-bars');
@@ -576,6 +584,7 @@
               x: pad.left + plotW + 8,
               y: y + rowH / 2 + 4,
               class: 'value-label',
+              'font-size': 11,
               text: `${fmt(item.value)}${opt.unit}`,
             }),
           );
@@ -691,15 +700,15 @@
 
     if (opt.center) {
       svg.append(
-        s('text', { x: cx, y: cy + 2, 'text-anchor': 'middle', class: 'value-label', 'font-size': 22, text: opt.center }),
+        s('text', { x: cx, y: cy + 1, 'text-anchor': 'middle', class: 'value-label', 'font-size': 16, text: opt.center }),
       );
       if (opt.centerSub) {
-        svg.append(s('text', { x: cx, y: cy + 20, 'text-anchor': 'middle', class: 'label', text: opt.centerSub }));
+        svg.append(s('text', { x: cx, y: cy + 16, 'text-anchor': 'middle', class: 'label', 'font-size': 10, text: opt.centerSub }));
       }
     }
     // The centre caption is free text - a formatted total or a translated
-    // subtitle - and at 22px it outgrows the hole in the ring long before it
-    // outgrows the chart, so let the viewBox follow it.
+    // subtitle - and must stay inside the hole in the ring, so let the
+    // viewBox follow it.
     const refit = fitContent(svg, { width: opt.size, height: opt.size });
 
     const wrap = document.createElement('div');
@@ -823,75 +832,120 @@
   /* --------------------------------------------------------------- heatmap */
   function heatmap(options) {
     const opt = Object.assign(
-      { cells: [], width: 760, cell: 26, gap: 3, colorFor: null, emptyText: '—' },
+      { cells: [], width: 760, cell: 26, gap: 3, colorFor: null, emptyText: '—', fluid: true },
       options,
     );
     const cells = opt.cells || [];
+    const host = document.createElement('div');
+    host.className = 'chart chart-heatmap';
+    if (!opt.fluid) host.style.maxWidth = `${opt.width}px`;
+
     if (!cells.length) {
-      const node = document.createElement('div');
-      node.className = 'chart';
       const empty = document.createElement('div');
       empty.className = 'chart-empty';
       empty.textContent = opt.emptyText;
-      node.append(empty);
-      return { node };
+      host.append(empty);
+      return { node: host };
     }
-    const step = opt.cell + opt.gap;
-    const cols = Math.max(1, Math.floor((opt.width - 4) / step));
-    const rows = Math.ceil(cells.length / cols);
-    const { node, svg } = frame(opt.width, rows * step + 6, 'chart-heatmap');
-    const tip = tooltip(node);
-    const max = Math.max(...cells.map((c) => c.value || 0)) || 1;
 
-    cells.forEach((cell, index) => {
-      const column = index % cols;
-      const row = Math.floor(index / cols);
-      const intensity = Math.max(0.08, (cell.value || 0) / max);
-      const colour = opt.colorFor ? opt.colorFor(cell, intensity) : `color-mix(in srgb, var(--danger) ${Math.round(intensity * 100)}%, var(--surface-3))`;
-      const rect = s('rect', {
-        x: 2 + column * step,
-        y: 2 + row * step,
-        width: opt.cell,
-        height: opt.cell,
-        rx: 3,
-        fill: colour,
-        class: 'cell',
+    const tip = tooltip(host);
+    const max = Math.max(...cells.map((c) => c.value || 0)) || 1;
+    let svg = null;
+    let lastWidth = 0;
+
+    const paint = (width) => {
+      const usable = Math.max(opt.cell + opt.gap, Math.floor(width) || opt.width);
+      if (Math.abs(usable - lastWidth) < 4 && svg) return;
+      lastWidth = usable;
+      const step = opt.cell + opt.gap;
+      const cols = Math.max(1, Math.floor((usable - 4) / step));
+      const rows = Math.ceil(cells.length / cols);
+      const height = rows * step + 6;
+      if (svg) svg.remove();
+      svg = s('svg', {
+        viewBox: `0 0 ${usable} ${height}`,
+        preserveAspectRatio: 'xMinYMid meet',
+        role: 'img',
+        focusable: 'false',
+        'font-size': 11,
       });
-      rect.style.opacity = '0';
-      rect.style.transition = `opacity 400ms ${Math.min(index * 6, 600)}ms`;
-      requestAnimationFrame(() => { rect.style.opacity = '1'; });
-      rect.addEventListener('mouseenter', () =>
-        tip.show(rect, `<b>${esc(cell.label)}</b>${cell.hint ? `<div class="r"><span>${esc(cell.hint)}</span><b>${esc(fmt(cell.value))}</b></div>` : `<div class="r"><b>${esc(fmt(cell.value))}</b></div>`}`),
-      );
-      rect.addEventListener('mouseleave', tip.hide);
-      if (typeof opt.onSelect === 'function') {
-        rect.style.cursor = 'pointer';
-        rect.addEventListener('click', () => opt.onSelect(cell));
-      }
-      svg.append(rect);
-    });
-    return { node, svg };
+      host.append(svg);
+
+      cells.forEach((cell, index) => {
+        const column = index % cols;
+        const row = Math.floor(index / cols);
+        const intensity = Math.max(0.08, (cell.value || 0) / max);
+        const colour = opt.colorFor
+          ? opt.colorFor(cell, intensity)
+          : `color-mix(in srgb, var(--danger) ${Math.round(intensity * 100)}%, var(--surface-3))`;
+        const rect = s('rect', {
+          x: 2 + column * step,
+          y: 2 + row * step,
+          width: opt.cell,
+          height: opt.cell,
+          rx: 3,
+          fill: colour,
+          class: 'cell',
+        });
+        rect.addEventListener('mouseenter', () =>
+          tip.show(
+            rect,
+            `<b>${esc(cell.label)}</b>${
+              cell.hint
+                ? `<div class="r"><span>${esc(cell.hint)}</span><b>${esc(fmt(cell.value))}</b></div>`
+                : `<div class="r"><b>${esc(fmt(cell.value))}</b></div>`
+            }`,
+          ),
+        );
+        rect.addEventListener('mouseleave', tip.hide);
+        if (typeof opt.onSelect === 'function') {
+          rect.style.cursor = 'pointer';
+          rect.addEventListener('click', () => opt.onSelect(cell));
+        }
+        svg.append(rect);
+      });
+    };
+
+    paint(opt.width);
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver((entries) => {
+        const box = entries[0] && entries[0].contentRect;
+        if (box && box.width) paint(box.width);
+      });
+      observer.observe(host);
+    } else {
+      Promise.resolve().then(() => {
+        if (host.clientWidth) paint(host.clientWidth);
+      });
+    }
+
+    return { node: host, get svg() { return svg; } };
   }
 
   /* --------------------------------------------------------------- treemap */
   function treemap(options) {
-    const opt = Object.assign({ items: [], width: 760, height: 320, colorFor: null }, options);
+    const opt = Object.assign({ items: [], width: 760, height: 320, colorFor: null, fluid: true }, options);
     const items = (opt.items || []).filter((i) => (i.value || 0) > 0).slice(0, 120);
+    const host = document.createElement('div');
+    host.className = 'chart chart-treemap';
+    if (!opt.fluid) host.style.maxWidth = `${opt.width}px`;
+
     if (!items.length) {
-      const node = document.createElement('div');
-      node.className = 'chart';
       const empty = document.createElement('div');
       empty.className = 'chart-empty';
       empty.textContent = opt.emptyText || '—';
-      node.append(empty);
-      return { node };
+      host.append(empty);
+      return { node: host };
     }
-    const { node, svg } = frame(opt.width, opt.height, 'chart-treemap');
-    const tip = tooltip(node);
-    const total = items.reduce((sum, i) => sum + i.value, 0);
+
+    const tip = tooltip(host);
+    const ranked = items.slice().sort((a, b) => b.value - a.value);
+    const total = ranked.reduce((sum, i) => sum + i.value, 0);
+    let svg = null;
+    let lastWidth = 0;
 
     // squarified-lite: slice-and-dice alternating direction keeps aspect sane
-    const layout = (list, x, y, w, h, horizontal) => {
+    const layout = (list, x, y, w, h, horizontal, emit) => {
       if (!list.length) return;
       if (list.length === 1) {
         emit(list[0], x, y, w, h);
@@ -908,57 +962,90 @@
       const rest = list.slice(index || 1);
       const share = first.reduce((acc, i) => acc + i.value, 0) / sum;
       if (horizontal) {
-        layout(first, x, y, w * share, h, !horizontal);
-        layout(rest, x + w * share, y, w * (1 - share), h, !horizontal);
+        layout(first, x, y, w * share, h, !horizontal, emit);
+        layout(rest, x + w * share, y, w * (1 - share), h, !horizontal, emit);
       } else {
-        layout(first, x, y, w, h * share, !horizontal);
-        layout(rest, x, y + h * share, w, h * (1 - share), !horizontal);
+        layout(first, x, y, w, h * share, !horizontal, emit);
+        layout(rest, x, y + h * share, w, h * (1 - share), !horizontal, emit);
       }
     };
 
-    const emit = (item, x, y, w, h) => {
-      if (w < 1 || h < 1) return;
-      const colour = opt.colorFor ? opt.colorFor(item) : PALETTE[0];
-      const rect = s('rect', {
-        x: x + 1,
-        y: y + 1,
-        width: Math.max(1, w - 2),
-        height: Math.max(1, h - 2),
-        rx: 3,
-        fill: colour,
-        stroke: 'var(--bg)',
-        'stroke-width': 1,
-        class: 'cell',
+    const paint = (width) => {
+      const usable = Math.max(240, Math.floor(width) || opt.width);
+      if (Math.abs(usable - lastWidth) < 8 && svg) return;
+      lastWidth = usable;
+      // Keep a stable aspect so tiles stay readable as the card grows.
+      const height = Math.max(240, Math.round((opt.height / opt.width) * usable));
+      if (svg) svg.remove();
+      svg = s('svg', {
+        viewBox: `0 0 ${usable} ${height}`,
+        preserveAspectRatio: 'xMinYMid meet',
+        role: 'img',
+        focusable: 'false',
+        'font-size': 11,
       });
-      rect.addEventListener('mouseenter', () =>
-        tip.show(rect, `<b>${esc(item.label)}</b><div class="r"><span>${esc(item.hint || '')}</span><b>${esc(fmt(item.value))}</b></div>`),
-      );
-      rect.addEventListener('mouseleave', tip.hide);
-      if (typeof opt.onSelect === 'function') {
-        rect.style.cursor = 'pointer';
-        rect.addEventListener('click', () => opt.onSelect(item));
-      }
-      svg.append(rect);
-      if (w > 62 && h > 22) {
-        const text = String(item.short || item.label);
-        const room = Math.max(1, Math.floor((w - 14) / 5.6));
-        // A treemap label is bounded by its own tile, so this is the one place
-        // shortening is unavoidable. The full name stays reachable through the
-        // hover tooltip and the native title below.
-        svg.append(
-          textBlock(
-            [text.length > room ? `${text.slice(0, room - 1)}…` : text],
-            { x: x + 7, y: y + 15, class: 'label treemap-label', 'font-size': 10 },
-            0,
-            item.label,
+      host.append(svg);
+
+      const emit = (item, x, y, w, h) => {
+        if (w < 1 || h < 1) return;
+        const colour = opt.colorFor ? opt.colorFor(item) : PALETTE[0];
+        const rect = s('rect', {
+          x: x + 1,
+          y: y + 1,
+          width: Math.max(1, w - 2),
+          height: Math.max(1, h - 2),
+          rx: 3,
+          fill: colour,
+          stroke: 'var(--bg)',
+          'stroke-width': 1,
+          class: 'cell',
+        });
+        rect.addEventListener('mouseenter', () =>
+          tip.show(
+            rect,
+            `<b>${esc(item.label)}</b><div class="r"><span>${esc(item.hint || '')}</span><b>${esc(fmt(item.value))}</b></div>`,
           ),
         );
-      }
+        rect.addEventListener('mouseleave', tip.hide);
+        if (typeof opt.onSelect === 'function') {
+          rect.style.cursor = 'pointer';
+          rect.addEventListener('click', () => opt.onSelect(item));
+        }
+        svg.append(rect);
+        if (w > 62 && h > 22) {
+          const text = String(item.short || item.label);
+          const room = Math.max(1, Math.floor((w - 14) / 5.6));
+          // A treemap label is bounded by its own tile, so this is the one place
+          // shortening is unavoidable. The full name stays reachable through the
+          // hover tooltip and the native title below.
+          svg.append(
+            textBlock(
+              [text.length > room ? `${text.slice(0, room - 1)}…` : text],
+              { x: x + 7, y: y + 15, class: 'label treemap-label', 'font-size': 10 },
+              0,
+              item.label,
+            ),
+          );
+        }
+      };
+
+      layout(ranked, 0, 0, usable, height, true, emit);
     };
 
-    items.sort((a, b) => b.value - a.value);
-    layout(items, 0, 0, opt.width, opt.height, true);
-    return { node, svg, total };
+    paint(opt.width);
+    if (typeof ResizeObserver === 'function') {
+      const observer = new ResizeObserver((entries) => {
+        const box = entries[0] && entries[0].contentRect;
+        if (box && box.width) paint(box.width);
+      });
+      observer.observe(host);
+    } else {
+      Promise.resolve().then(() => {
+        if (host.clientWidth) paint(host.clientWidth);
+      });
+    }
+
+    return { node: host, get svg() { return svg; }, total };
   }
 
   /* ------------------------------------------------------------- stack bar */

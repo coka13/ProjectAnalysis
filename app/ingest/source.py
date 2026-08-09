@@ -186,22 +186,37 @@ def _mirror_dir(url: str) -> Path:
 
 
 def clone_or_update(url: str, ref: str = "") -> Path:
-    """Clone (or fetch) a remote repository into the managed cache and checkout ``ref``."""
+    """Clone (or fetch) a remote repository into the managed cache and checkout ``ref``.
+
+    A mirror that is already on disk is reused when the network is unreachable,
+    so an air-gapped machine can re-analyse a project that was cloned earlier.
+    The first clone still needs network access.
+    """
     if not settings.allow_remote_clone:
         raise SourceError("Remote cloning is disabled by configuration")
     url = validate_remote(url)
     ref = validate_ref(ref)
     target = _mirror_dir(url)
+    network_timeout = min(settings.git_timeout_seconds, settings.git_network_timeout_seconds)
 
     if target.exists() and is_git_repository(target):
         log.info("fetching updates for %s", target.name)
-        _run_git(["fetch", "--all", "--tags", "--prune"], cwd=target)
+        try:
+            _run_git(["fetch", "--all", "--tags", "--prune"], cwd=target, timeout=network_timeout)
+        except SourceError as exc:
+            # Offline or firewalled: keep analysing the last successful mirror.
+            log.warning("fetch failed for %s; using cached mirror (%s)", target.name, exc)
     else:
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
         target.parent.mkdir(parents=True, exist_ok=True)
         log.info("cloning repository into %s", target.name)
-        _run_git(["clone", "--no-single-branch", "--", url, str(target)])
+        try:
+            _run_git(["clone", "--no-single-branch", "--", url, str(target)], timeout=network_timeout)
+        except SourceError as exc:
+            raise SourceError(
+                f"Could not clone the repository (network required for the first copy): {exc}"
+            ) from exc
 
     if ref:
         _run_git(["checkout", "--force", ref], cwd=target)

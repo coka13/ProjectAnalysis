@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import (
     QFormLayout,
+    QHBoxLayout,
     QLineEdit,
     QTabWidget,
     QVBoxLayout,
@@ -30,6 +31,9 @@ class SettingsView(DataView):
         super().__init__(window, "nav.settings", "settings.subtitle")
 
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.setMovable(False)
+        self.tabs.setUsesScrollButtons(True)
         self.tabs.addTab(self._appearance(), t("settings.appearance"))
         self.tabs.addTab(self._provider(), t("provider.title"))
         self.tabs.addTab(self._weights(), t("score.weights"))
@@ -143,11 +147,20 @@ class SettingsView(DataView):
 
         self._provider_state = label("", role="dim", wrap=True)
         card.add(self._provider_state)
-        card.add(
+        actions = QWidget()
+        actions.setObjectName("Plain")
+        action_row = QHBoxLayout(actions)
+        action_row.setContentsMargins(0, theme.S[2], 0, 0)
+        action_row.setSpacing(theme.S[2])
+        action_row.addWidget(
             button(t("common.save"), variant="primary", on_click=self._save_provider)
         )
-        card.add(button(t("provider.test"), on_click=self._test_provider))
-        card.add(button(t("provider.clear"), variant="danger", on_click=self._clear_provider))
+        action_row.addWidget(button(t("provider.test"), on_click=self._test_provider))
+        action_row.addWidget(
+            button(t("provider.clear"), variant="danger", on_click=self._clear_provider)
+        )
+        action_row.addStretch(1)
+        card.add(actions)
         return _scrolled(card)
 
     def _save_provider(self) -> None:

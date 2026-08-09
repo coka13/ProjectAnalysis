@@ -156,7 +156,31 @@ class DatabaseAnalyzer(Analyzer):
                     )
                 continue
             name = tokens[0]
-            column_type = tokens[1].upper() if len(tokens) > 1 else "TEXT"
+            # Skip non-type tokens (DEFAULT 2001, AUTO_INCREMENT=…, bare numbers).
+            column_type = "TEXT"
+            for token in tokens[1:]:
+                upper_tok = token.upper().rstrip(",")
+                if upper_tok in {
+                    "NOT",
+                    "NULL",
+                    "PRIMARY",
+                    "KEY",
+                    "UNIQUE",
+                    "DEFAULT",
+                    "REFERENCES",
+                    "CONSTRAINT",
+                    "CHECK",
+                    "COLLATE",
+                    "GENERATED",
+                    "AS",
+                    "IDENTITY",
+                    "AUTO_INCREMENT",
+                }:
+                    break
+                if upper_tok[:1].isdigit() or upper_tok.startswith("'") or upper_tok.startswith('"'):
+                    break
+                column_type = upper_tok
+                break
             upper = definition.upper()
             column = {
                 "name": name,

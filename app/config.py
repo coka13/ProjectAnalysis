@@ -99,6 +99,9 @@ class Settings(BaseSettings):
     max_file_bytes: int = 1_500_000
     max_files: int = 25_000
     git_timeout_seconds: int = 600
+    # Cap for clone/fetch so an offline machine fails in under two minutes
+    # instead of hanging for the full git_timeout_seconds.
+    git_network_timeout_seconds: int = 90
 
     # Default AI provider (any OpenAI-compatible endpoint)
     ai_base_url: str = ""

@@ -122,9 +122,9 @@ class ScoreGauge(ChartBase):
 
         centre = box.center()
         painter.setPen(QColor(self._tone()))
-        painter.setFont(self._font(theme.F_4XL, bold=True))
+        painter.setFont(self._font(theme.F_3XL, bold=True))
         painter.drawText(
-            QRectF(box.left(), centre.y() - 40, box.width(), 52),
+            QRectF(box.left(), centre.y() - 34, box.width(), 44),
             int(Qt.AlignmentFlag.AlignCenter),
             f"{self._score:.0f}",
         )
@@ -191,17 +191,17 @@ class DonutChart(ChartBase):
         centre = box.center()
         if self._total_label:
             painter.setPen(QColor(self.tokens.text))
-            painter.setFont(self._font(theme.F_3XL, bold=True))
+            painter.setFont(self._font(theme.F_2XL, bold=True))
             painter.drawText(
-                QRectF(box.left(), centre.y() - 34, box.width(), 44),
+                QRectF(box.left(), centre.y() - 26, box.width(), 34),
                 int(Qt.AlignmentFlag.AlignCenter),
                 self._total_label,
             )
         if self._total_caption:
             painter.setPen(QColor(self.tokens.text_2))
-            painter.setFont(self._font(theme.F_LG))
+            painter.setFont(self._font(theme.F_SM))
             painter.drawText(
-                QRectF(box.left(), centre.y() + 8, box.width(), 26),
+                QRectF(box.left(), centre.y() + 8, box.width(), 22),
                 int(Qt.AlignmentFlag.AlignCenter),
                 self._total_caption,
             )

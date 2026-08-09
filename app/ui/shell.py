@@ -271,7 +271,7 @@ class MainWindow(QMainWindow):
         widget.setCheckable(True)
         widget.setCursor(Qt.CursorShape.PointingHandCursor)
         # .nav-item .ico is 16px, smaller than the default icon size.
-        widget.setIcon(make_icon(item.icon, self.palette_tokens.text_2, 16))
+        widget.setIcon(make_icon(item.icon, self.palette_tokens.text, 16))
         widget.setIconSize(QSize(16, 16))
         widget.clicked.connect(lambda _=False, key=item.key: self.navigate(key))
         self._group.addButton(widget)

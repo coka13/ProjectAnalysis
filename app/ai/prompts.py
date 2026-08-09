@@ -22,7 +22,9 @@ IDENTIFIER_RULE = (
 BASE_SYSTEM = (
     "You are a principal software architect performing a rigorous review of a real codebase. "
     "You reason only from the structured evidence provided; you never invent components, files or metrics. "
-    "If evidence is insufficient, you say so explicitly. Be concise, specific and actionable."
+    "If evidence is insufficient, you say so explicitly. Be concise, specific and actionable. "
+    "When a JSON schema is requested, reply with that JSON object only — no markdown fences, "
+    "no preamble, no chain-of-thought tags."
 )
 
 
@@ -158,7 +160,8 @@ def explain_diagram(diagram: dict[str, Any], graph_context: str, language: str) 
         f"PROJECT CONTEXT:\n{graph_context}\n\n"
         "For every risk, state what you observed, why it matters and what to do about it. "
         "A severity word on its own is not useful to the reader.\n"
-        "Respond with a single JSON object using exactly this schema (no markdown, no commentary):\n"
+        "Respond with a single JSON object using exactly this schema.\n"
+        "The first character of your reply must be `{`. No markdown, no commentary:\n"
         f"{json.dumps(schema, ensure_ascii=False)}"
     )
     return [system_message(language), {"role": "user", "content": user}]
@@ -205,7 +208,8 @@ def code_fix(
         "- No markdown fences, no line numbers, no commentary inside `replacement`.\n"
         "- If you cannot fix it safely from this excerpt alone, return an empty string for "
         "`replacement` and explain why in `diagnosis`.\n\n"
-        "Respond with a single JSON object using exactly this schema (no markdown):\n"
+        "Respond with a single JSON object using exactly this schema.\n"
+        "The first character of your reply must be `{`. No markdown, no commentary:\n"
         f"{json.dumps(schema, ensure_ascii=False)}"
     )
     return [system_message(language), {"role": "user", "content": user}]
@@ -226,7 +230,8 @@ def architecture_review(graph_context: str, metrics: dict[str, Any], language: s
         f"COMPUTED METRICS:\n{json.dumps(metrics, ensure_ascii=False)[:6000]}\n\n"
         "The computed score is a static analysis result; keep your reported score within 10 points of it "
         "unless the evidence strongly contradicts it.\n"
-        "Respond with a single JSON object using exactly this schema (no markdown):\n"
+        "Respond with a single JSON object using exactly this schema.\n"
+        "The first character of your reply must be `{`. No markdown, no commentary:\n"
         f"{json.dumps(schema, ensure_ascii=False)}"
     )
     return [system_message(language), {"role": "user", "content": user}]
@@ -252,7 +257,8 @@ def refactoring_plan(graph_context: str, findings: dict[str, Any], language: str
         f"EVIDENCE:\n{graph_context}\n\n"
         f"STATIC FINDINGS:\n{json.dumps(findings, ensure_ascii=False)[:6000]}\n\n"
         "Prioritise structural problems (cycles, god classes, layering violations, missing abstractions). "
-        "Respond with a single JSON object using exactly this schema (no markdown):\n"
+        "Respond with a single JSON object using exactly this schema.\n"
+        "The first character of your reply must be `{`. No markdown, no commentary:\n"
         f"{json.dumps(schema, ensure_ascii=False)}"
     )
     return [system_message(language), {"role": "user", "content": user}]
@@ -280,7 +286,8 @@ def natural_language_query(prompt: str, available: dict[str, Any], language: str
         f"AVAILABLE MODULES AND COMPONENTS:\n{json.dumps(available, ensure_ascii=False)[:4000]}\n\n"
         "Pick the single most appropriate diagram kind and the narrowest filters that satisfy the request. "
         "Use 'executive' detail for requests aimed at executives or customers.\n"
-        "Respond with a single JSON object using exactly this schema (no markdown):\n"
+        "Respond with a single JSON object using exactly this schema.\n"
+        "The first character of your reply must be `{`. No markdown, no commentary:\n"
         f"{json.dumps(schema, ensure_ascii=False)}"
     )
     return [system_message(language), {"role": "user", "content": user}]
@@ -297,7 +304,8 @@ def comparison(diff: dict[str, Any], language: str) -> list[dict[str, str]]:
     user = (
         "Two versions of the same system were analysed. Explain the architectural impact of the difference.\n\n"
         f"STRUCTURAL DIFF:\n{json.dumps(diff, ensure_ascii=False)[:8000]}\n\n"
-        "Respond with a single JSON object using exactly this schema (no markdown):\n"
+        "Respond with a single JSON object using exactly this schema.\n"
+        "The first character of your reply must be `{`. No markdown, no commentary:\n"
         f"{json.dumps(schema, ensure_ascii=False)}"
     )
     return [system_message(language), {"role": "user", "content": user}]

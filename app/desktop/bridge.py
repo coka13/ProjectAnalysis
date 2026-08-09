@@ -24,7 +24,7 @@ from app.compare import architecture_diff
 from app.config import settings
 from app.core.jobs import job_manager
 from app.db import session_scope
-from app.diagrams.base import DiagramFilters
+from app.diagrams.base import DiagramFilters, EmptyDiagramError
 from app.diagrams.registry import DIAGRAM_KINDS, DEFAULT_ORDER, generate
 from app.export import exporters
 from app.graph import metrics as metrics_mod
@@ -352,15 +352,16 @@ class Api:
         with session_scope() as session:
             project = _get_project(session, _need(payload, "project_id"))
             kind, location = project.source_kind.value, project.source_location
-        resolved = source_mod.resolve(kind, location, "")
-        if not resolved.is_git:
+        # Read-only: never clone/fetch just to list branches.
+        root = source_mod.locate(kind, location)
+        if root is None or not source_mod.is_git_repository(root):
             return {"is_git": False, "branches": [], "tags": [], "current": ""}
-        refs = source_mod.list_refs(resolved.root)
+        refs = source_mod.list_refs(root)
         return {
             "is_git": True,
             "branches": refs.get("branches", []),
             "tags": refs.get("tags", []),
-            "current": source_mod.current_branch(resolved.root),
+            "current": source_mod.current_branch(root),
         }
 
     # ---------------------------------------------------------- analysis
@@ -477,7 +478,7 @@ class Api:
             run = _succeeded_run(session, _need(payload, "analysis_id"))
             card = (run.metrics or {}).get("scorecard") or {}
             project = _get_project(session, run.project_id)
-            kind, location, ref = project.source_kind.value, project.source_location, run.ref
+            kind, location = project.source_kind.value, project.source_location
         for category in card.get("categories", []):
             if category["id"] != category_id:
                 continue
@@ -485,12 +486,17 @@ class Api:
                 if signal["id"] != signal_id:
                     continue
                 evidence = [dict(item) for item in signal.get("evidence", [])]
-                try:
-                    root = source_mod.resolve(kind, location, ref).root
-                    for item in evidence:
-                        item["excerpt"] = _read_excerpt(root, item.get("file", ""), int(item.get("line") or 0))
-                except Exception:  # noqa: BLE001 - excerpts are a nicety, not a requirement
-                    pass
+                # locate() only - resolve() would clone/fetch remotes and
+                # force-checkout local trees just to show a code excerpt.
+                root = source_mod.locate(kind, location)
+                if root is not None:
+                    try:
+                        for item in evidence:
+                            item["excerpt"] = _read_excerpt(
+                                root, item.get("file", ""), int(item.get("line") or 0)
+                            )
+                    except Exception:  # noqa: BLE001 - excerpts are a nicety, not a requirement
+                        pass
                 return {"signal": signal, "evidence": evidence, "category": category["label"]}
         raise BridgeError("That signal is not part of this scorecard")
 
@@ -782,7 +788,8 @@ class Api:
             result["ai_error"] = str(exc)
             return result
         result.update(enriched)
-        result["mode"] = "ai" if enriched.get("ai_patched") else "static"
+        # Provider was consulted even when every candidate failed or was skipped.
+        result["mode"] = "ai"
         return result
 
     @endpoint
@@ -1097,7 +1104,21 @@ class Api:
             spec = asyncio.run(insights.interpret_request(graph, prompt, language, provider))
 
             filters = DiagramFilters.from_payload(spec.get("filters") or {})
-            result = generate(spec["kind"], graph, filters)
+            try:
+                result = generate(spec["kind"], graph, filters)
+            except EmptyDiagramError:
+                # Narrow focus/module filters from NL interpretation often match
+                # nothing; retry once with a project-wide scope before failing.
+                relaxed = DiagramFilters(
+                    scope="project",
+                    include_external=filters.include_external,
+                    detail=filters.detail,
+                    max_nodes=filters.max_nodes,
+                    languages=filters.languages,
+                )
+                result = generate(spec["kind"], graph, relaxed)
+                filters = relaxed
+                spec = {**spec, "filters": filters.to_dict(), "relaxed": True}
             diagram = Diagram(
                 analysis_id=run.id,
                 kind=result.kind,

@@ -18,6 +18,10 @@ from app.config import _env_files
 def test_resource_root_is_the_repository_when_running_from_source():
     assert (branding.resource_root() / "web" / "index.html").is_file()
     assert (branding.resource_root() / "assets" / "appicon.ico").is_file()
+    # Diagrams and HTML export require the vendored Mermaid build offline.
+    mermaid = branding.resource_root() / "web" / "vendor" / "mermaid.min.js"
+    assert mermaid.is_file()
+    assert mermaid.stat().st_size > 100_000
 
 
 def test_resource_root_follows_the_bundle_when_frozen(monkeypatch, tmp_path):

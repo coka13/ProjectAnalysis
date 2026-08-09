@@ -141,7 +141,8 @@ class Segmented(QWidget):
     """A row of pills where exactly one is chosen, applied on click.
 
     The settings screen has no Save button: choosing a pill is the action, so
-    each one reports its value straight away.
+    each one reports its value straight away. Pills keep a maximum size so a
+    long label cannot stretch the whole row.
     """
 
     def __init__(
@@ -156,8 +157,12 @@ class Segmented(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(theme.S[2])
+        # Let the pills wrap onto another line on a narrow settings pane
+        # instead of overflowing the card.
+        layout.setSizeConstraint(QHBoxLayout.SizeConstraint.SetMinimumSize)
 
         from PySide6.QtWidgets import QButtonGroup
+
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         for value, text in options:
@@ -166,6 +171,7 @@ class Segmented(QWidget):
             pill.setCheckable(True)
             pill.setCursor(Qt.CursorShape.PointingHandCursor)
             pill.setChecked(value == current)
+            pill.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             pill.clicked.connect(lambda _=False, v=value: on_change(v))
             self._group.addButton(pill)
             layout.addWidget(pill)

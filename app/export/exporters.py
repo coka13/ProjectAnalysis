@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import xml.etree.ElementTree as ET
+from functools import lru_cache
 from typing import Any
 
-MERMAID_CDN = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs"
+from app.branding import resource_root
+
+log = logging.getLogger("aai.export")
 
 EXPORT_FORMATS = ["mermaid", "plantuml", "markdown", "html", "drawio", "json"]
 
@@ -40,6 +44,7 @@ _LABELS = {
         "notes": "Notes",
         "source": "Source",
         "diagram": "Diagram",
+        "offline_mermaid_missing": "Mermaid could not be embedded. Open this file from ProjectAnalysis, or copy web/vendor/mermaid.min.js next to it.",
     },
     "he": {
         "purpose": "מטרה",
@@ -51,12 +56,28 @@ _LABELS = {
         "notes": "הערות",
         "source": "מקור",
         "diagram": "תרשים",
+        "offline_mermaid_missing": "לא ניתן היה להטמיע את Mermaid. פתחו את הקובץ מתוך ProjectAnalysis, או העתיקו את web/vendor/mermaid.min.js לידו.",
     },
 }
+
+# Offline-safe faces only. Variable / cloud fonts stall or substitute on
+# air-gapped Windows machines.
+_HTML_FONT = "Segoe UI, system-ui, Arial, sans-serif"
 
 
 def _label(language: str, key: str) -> str:
     return _LABELS.get(language, _LABELS["en"]).get(key, key)
+
+
+@lru_cache(maxsize=1)
+def _vendored_mermaid() -> str:
+    """The same Mermaid build the desktop UI loads - no CDN."""
+    path = resource_root() / "web" / "vendor" / "mermaid.min.js"
+    if not path.is_file():
+        log.warning("vendored Mermaid missing at %s", path)
+        return ""
+    # Keep </script> from terminating the surrounding HTML script element.
+    return path.read_text(encoding="utf-8").replace("</", "<\\/")
 
 
 def export(diagram: dict[str, Any], fmt: str, *, language: str = "en") -> str:
@@ -143,6 +164,7 @@ def to_html(diagram: dict[str, Any], *, language: str = "en") -> str:
     explanation = (diagram.get("explanation") or {}).get(language) or (diagram.get("explanation") or {}).get("en") or {}
     escaped_title = html.escape(str(diagram.get("title", "Diagram")))
     mermaid_source = html.escape(diagram.get("mermaid", ""))
+    mermaid_js = _vendored_mermaid()
 
     def section(title: str, items: list[str]) -> str:
         if not items:
@@ -154,6 +176,25 @@ def to_html(diagram: dict[str, Any], *, language: str = "en") -> str:
     components = [f"{item.get('name', '')} - {item.get('role', '')}" for item in explanation.get("key_components") or []]
     patterns = [f"{item.get('pattern', '')} - {item.get('evidence', '')}" for item in explanation.get("patterns") or []]
 
+    if mermaid_js:
+        renderer = f"""<script>{mermaid_js}</script>
+<script>
+  mermaid.initialize({{ startOnLoad: false, theme: 'dark', securityLevel: 'strict',
+    fontFamily: '{_HTML_FONT}' }});
+  mermaid.run({{ querySelector: '.mermaid' }});
+</script>"""
+    else:
+        renderer = (
+            f"<p><code>{html.escape(_label(language, 'offline_mermaid_missing'))}</code></p>"
+            '<script src="mermaid.min.js"></script>\n'
+            "<script>\n"
+            "  if (window.mermaid) {\n"
+            "    mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });\n"
+            "    mermaid.run({ querySelector: '.mermaid' });\n"
+            "  }\n"
+            "</script>"
+        )
+
     return f"""<!DOCTYPE html>
 <html lang="{html.escape(language)}" dir="{direction}">
 <head>
@@ -163,7 +204,7 @@ def to_html(diagram: dict[str, Any], *, language: str = "en") -> str:
 <style>
   :root {{ color-scheme: dark; }}
   body {{ margin:0; padding:2rem; background:#0f1319; color:#e6edf5;
-         font-family:'Segoe UI',system-ui,'Noto Sans Hebrew',sans-serif; line-height:1.6; }}
+         font-family:{_HTML_FONT}; line-height:1.6; }}
   h1 {{ font-size:1.6rem; margin-top:0; }}
   h2 {{ font-size:1.1rem; color:#9fb8d4; border-bottom:1px solid #24303d; padding-bottom:.35rem; }}
   .diagram {{ background:#151b23; border:1px solid #24303d; border-radius:12px; padding:1.25rem; overflow:auto; }}
@@ -182,10 +223,7 @@ def to_html(diagram: dict[str, Any], *, language: str = "en") -> str:
 {section(_label(language, "improvements"), list(explanation.get("improvements") or []))}
 {section(_label(language, "notes"), list(diagram.get("notes") or []))}
 <footer>ProjectAnalysis</footer>
-<script type="module">
-  import mermaid from '{MERMAID_CDN}';
-  mermaid.initialize({{ startOnLoad: true, theme: 'dark', securityLevel: 'strict' }});
-</script>
+{renderer}
 </body>
 </html>"""
 

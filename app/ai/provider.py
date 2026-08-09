@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import asdict, dataclass, field
@@ -23,6 +24,18 @@ from app.config import settings
 log = logging.getLogger("aai.ai")
 
 _FORBIDDEN_HEADERS = {"host", "content-length", "connection", "transfer-encoding"}
+
+_THINK_BLOCK = re.compile(
+    r"<(think|thinking|reasoning|reflection)[^>]*>.*?</\1\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_FENCE_BLOCK = re.compile(r"```(?:json|JSON)?\s*\r?\n?(.*?)```", re.DOTALL)
+_TRAILING_COMMA = re.compile(r",\s*([}\]])")
+
+JSON_REPAIR_USER = (
+    "Your previous reply was not valid JSON. Reply again with ONLY one JSON object "
+    "matching the requested schema. No markdown fences, no commentary, no thinking tags."
+)
 
 
 class AIProviderError(RuntimeError):
@@ -103,6 +116,8 @@ class AIProvider:
         if not config.model:
             raise AIProviderError("AI provider model is not configured")
         self.config = config
+        # After the first HTTP 400 on response_format, skip it for later calls.
+        self._json_mode_ok: bool | None = None
 
     # ------------------------------------------------------------------ util
     def _payload(self, messages: list[dict[str, str]], *, stream: bool, json_mode: bool, **overrides: Any) -> dict:
@@ -113,20 +128,46 @@ class AIProvider:
             "max_tokens": overrides.get("max_tokens", self.config.max_tokens),
             "stream": stream,
         }
-        if json_mode:
+        # OpenAI-style JSON mode. Many gateways (OpenRouter for some models,
+        # Ollama, older LM Studio) reject this field with HTTP 400.
+        if json_mode and self._json_mode_ok is not False:
             payload["response_format"] = {"type": "json_object"}
         return payload
+
+    @staticmethod
+    def _json_mode_unsupported(exc: AIProviderError) -> bool:
+        """True when the server likely rejected OpenAI-style JSON mode.
+
+        Local stacks (Ollama, LM Studio, llama.cpp) often answer with a bare
+        HTTP 400 and no useful body, so any non-retryable 400 while json_mode
+        was requested is treated as a signal to retry without response_format.
+        """
+        return exc.status_code == 400 and not exc.retryable
 
     @staticmethod
     def _extract(data: dict) -> str:
         choices = data.get("choices") or []
         if not choices:
             return ""
-        message = choices[0].get("message") or {}
+        choice = choices[0]
+        message = choice.get("message") or {}
         content = message.get("content")
         if isinstance(content, list):  # some gateways return content parts
-            return "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        return content or choices[0].get("text", "") or ""
+            parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    parts.append(part.get("text") or part.get("content") or "")
+                elif isinstance(part, str):
+                    parts.append(part)
+            content = "".join(parts)
+        if content:
+            return str(content)
+        # Reasoning models sometimes leave content empty and put the answer elsewhere.
+        for key in ("reasoning_content", "reasoning", "text"):
+            value = message.get(key) or choice.get(key)
+            if value:
+                return str(value)
+        return ""
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code < 400:
@@ -141,28 +182,7 @@ class AIProvider:
 
     # ------------------------------------------------------------------ sync
     def chat_sync(self, messages: list[dict[str, str]], *, json_mode: bool = False, **overrides: Any) -> str:
-        last_error: Exception | None = None
-        for attempt in range(self.config.max_retries + 1):
-            try:
-                with httpx.Client(timeout=self.config.timeout_seconds) as client:
-                    response = client.post(
-                        self.config.chat_url,
-                        headers=self.config.sanitized_headers(),
-                        json=self._payload(messages, stream=False, json_mode=json_mode, **overrides),
-                    )
-                    self._raise_for_status(response)
-                    return self._extract(response.json())
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_error = AIProviderError(f"AI provider is unreachable: {exc}", retryable=True)
-            except AIProviderError as exc:
-                last_error = exc
-                if not exc.retryable:
-                    raise
-            except json.JSONDecodeError as exc:
-                raise AIProviderError("AI provider returned a malformed response") from exc
-            if attempt < self.config.max_retries:
-                time.sleep(self.config.retry_backoff_seconds * (2**attempt))
-        raise last_error or AIProviderError("AI request failed")
+        return self._chat(messages, json_mode=json_mode, sync=True, **overrides)
 
     def stream_sync(self, messages: list[dict[str, str]], **overrides: Any) -> Iterator[str]:
         with httpx.Client(timeout=self.config.timeout_seconds) as client:
@@ -180,28 +200,126 @@ class AIProvider:
 
     # ----------------------------------------------------------------- async
     async def chat(self, messages: list[dict[str, str]], *, json_mode: bool = False, **overrides: Any) -> str:
-        last_error: Exception | None = None
-        for attempt in range(self.config.max_retries + 1):
+        return await self._chat(messages, json_mode=json_mode, sync=False, **overrides)
+
+    async def chat_json(self, messages: list[dict[str, str]], **overrides: Any) -> dict[str, Any]:
+        """Ask for JSON and recover when the model wraps or mangles the reply.
+
+        Local models and some OpenRouter routes ignore response_format and return
+        markdown or prose. A repair turn asks again for JSON only — without
+        echoing the bad prose as an assistant message, which tends to continue it.
+        """
+        raw = await self.chat(messages, json_mode=True, **overrides)
+        parsed = parse_json_response(raw)
+        if parsed:
+            return parsed
+
+        preview = " ".join(str(raw or "").split())[:240]
+        log.warning("AI JSON parse failed; requesting a repair turn. preview=%r", preview)
+
+        repair_messages = list(messages) + [
+            {
+                "role": "user",
+                "content": (
+                    f"{JSON_REPAIR_USER}\n"
+                    "The first character of your reply must be `{`.\n"
+                    f"Your previous reply began with: {preview!r}"
+                ),
+            }
+        ]
+        repaired = await self.chat(
+            repair_messages,
+            json_mode=True,
+            temperature=0.0,
+            max_tokens=overrides.get("max_tokens", max(self.config.max_tokens, 2048)),
+        )
+        parsed = parse_json_response(repaired)
+        if parsed:
+            return parsed
+
+        raise AIProviderError(
+            "AI returned a response that could not be parsed as JSON"
+            + (f" (preview: {preview})" if preview else "")
+        )
+
+    def _chat(self, messages: list[dict[str, str]], *, json_mode: bool, sync: bool, **overrides: Any):
+        """Post a chat completion, retrying without JSON mode when the server rejects it."""
+
+        async def _async_once(use_json_mode: bool) -> str:
+            last_error: Exception | None = None
+            for attempt in range(self.config.max_retries + 1):
+                try:
+                    async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
+                        response = await client.post(
+                            self.config.chat_url,
+                            headers=self.config.sanitized_headers(),
+                            json=self._payload(messages, stream=False, json_mode=use_json_mode, **overrides),
+                        )
+                        self._raise_for_status(response)
+                        return self._extract(response.json())
+                except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    last_error = AIProviderError(f"AI provider is unreachable: {exc}", retryable=True)
+                except AIProviderError as exc:
+                    last_error = exc
+                    if not exc.retryable:
+                        raise
+                except json.JSONDecodeError as exc:
+                    raise AIProviderError("AI provider returned a malformed response") from exc
+                if attempt < self.config.max_retries:
+                    await asyncio.sleep(self.config.retry_backoff_seconds * (2**attempt))
+            raise last_error or AIProviderError("AI request failed")
+
+        def _sync_once(use_json_mode: bool) -> str:
+            last_error: Exception | None = None
+            for attempt in range(self.config.max_retries + 1):
+                try:
+                    with httpx.Client(timeout=self.config.timeout_seconds) as client:
+                        response = client.post(
+                            self.config.chat_url,
+                            headers=self.config.sanitized_headers(),
+                            json=self._payload(messages, stream=False, json_mode=use_json_mode, **overrides),
+                        )
+                        self._raise_for_status(response)
+                        return self._extract(response.json())
+                except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    last_error = AIProviderError(f"AI provider is unreachable: {exc}", retryable=True)
+                except AIProviderError as exc:
+                    last_error = exc
+                    if not exc.retryable:
+                        raise
+                except json.JSONDecodeError as exc:
+                    raise AIProviderError("AI provider returned a malformed response") from exc
+                if attempt < self.config.max_retries:
+                    time.sleep(self.config.retry_backoff_seconds * (2**attempt))
+            raise last_error or AIProviderError("AI request failed")
+
+        if sync:
             try:
-                async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
-                    response = await client.post(
-                        self.config.chat_url,
-                        headers=self.config.sanitized_headers(),
-                        json=self._payload(messages, stream=False, json_mode=json_mode, **overrides),
-                    )
-                    self._raise_for_status(response)
-                    return self._extract(response.json())
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_error = AIProviderError(f"AI provider is unreachable: {exc}", retryable=True)
+                result = _sync_once(json_mode and self._json_mode_ok is not False)
+                if json_mode and self._json_mode_ok is None:
+                    self._json_mode_ok = True
+                return result
             except AIProviderError as exc:
-                last_error = exc
-                if not exc.retryable:
-                    raise
-            except json.JSONDecodeError as exc:
-                raise AIProviderError("AI provider returned a malformed response") from exc
-            if attempt < self.config.max_retries:
-                await asyncio.sleep(self.config.retry_backoff_seconds * (2**attempt))
-        raise last_error or AIProviderError("AI request failed")
+                if json_mode and self._json_mode_ok is not False and self._json_mode_unsupported(exc):
+                    log.info("provider rejected JSON mode; retrying without response_format")
+                    self._json_mode_ok = False
+                    return _sync_once(False)
+                raise
+
+        async def _async_with_fallback() -> str:
+            try:
+                result = await _async_once(json_mode and self._json_mode_ok is not False)
+                if json_mode and self._json_mode_ok is None:
+                    self._json_mode_ok = True
+                return result
+            except AIProviderError as exc:
+                if json_mode and self._json_mode_ok is not False and self._json_mode_unsupported(exc):
+                    log.info("provider rejected JSON mode; retrying without response_format")
+                    self._json_mode_ok = False
+                    return await _async_once(False)
+                raise
+
+        return _async_with_fallback()
 
     async def stream(self, messages: list[dict[str, str]], **overrides: Any) -> AsyncIterator[str]:
         async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
@@ -256,21 +374,95 @@ def _parse_sse_line(line: str) -> str:
     return ""
 
 
+def _strip_noise(text: str) -> str:
+    cleaned = _THINK_BLOCK.sub("", text)
+    # Unclosed think blocks from truncated replies.
+    cleaned = re.sub(r"<(think|thinking|reasoning)[^>]*>.*$", "", cleaned, flags=re.IGNORECASE | re.DOTALL)
+    return cleaned.strip()
+
+
+def _balanced_json_slice(text: str) -> str:
+    """Return the first top-level JSON object or array in ``text``."""
+    start_obj = text.find("{")
+    start_arr = text.find("[")
+    if start_obj == -1 and start_arr == -1:
+        return ""
+    if start_obj == -1 or (start_arr != -1 and start_arr < start_obj):
+        start, open_ch, close_ch = start_arr, "[", "]"
+    else:
+        start, open_ch, close_ch = start_obj, "{", "}"
+
+    depth = 0
+    in_string = False
+    escape = False
+    for index in range(start, len(text)):
+        ch = text[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return text[start:]
+
+
+def _loads_lenient(candidate: str) -> Any:
+    if not candidate or not candidate.strip():
+        return None
+    text = candidate.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    repaired = (
+        text.replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+    )
+    repaired = _TRAILING_COMMA.sub(r"\1", repaired)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+
+
 def parse_json_response(raw: str) -> dict[str, Any]:
-    """Best-effort extraction of a JSON object from a model response."""
+    """Best-effort extraction of a JSON object from a model response.
+
+    Local models frequently wrap JSON in markdown fences, prepend chain-of-thought
+    tags, or emit trailing commas. None of those should force a static fallback.
+    """
     if not raw:
         return {}
-    text = raw.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text.split("\n", 1)[1] if "\n" in text else text
-        text = text.rsplit("```", 1)[0]
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return {}
-    try:
-        parsed = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+    text = _strip_noise(str(raw))
+    candidates: list[str] = []
+    for match in _FENCE_BLOCK.finditer(text):
+        candidates.append(match.group(1).strip())
+    slice_ = _balanced_json_slice(text)
+    if slice_:
+        candidates.append(slice_)
+    candidates.append(text)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        parsed = _loads_lenient(candidate)
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+            return parsed[0]
+    return {}

@@ -183,6 +183,10 @@ def _method_body(source: str, name: str) -> str:
 HISTORY_ENDPOINTS = _method_body(BRIDGE_PY, "analysis_history") + _method_body(
     BRIDGE_PY, "analysis_commit_graph"
 )
+EVIDENCE_ENDPOINT = _method_body(BRIDGE_PY, "score_evidence")
+REFS_ENDPOINT = _method_body(BRIDGE_PY, "project_refs")
+EXPORT_PY = (ROOT / "app" / "export" / "exporters.py").read_text(encoding="utf-8")
+VENDOR_MERMAID = WEB / "vendor" / "mermaid.min.js"
 
 
 CHECKS: list[tuple[str, bool]] = [
@@ -341,6 +345,14 @@ CHECKS: list[tuple[str, bool]] = [
     ("history uses the read-only locate, not resolve", "def locate" in SOURCE_PY),
     ("the history bridge does not take the write path", bool(HISTORY_ENDPOINTS) and "source_mod.resolve" not in HISTORY_ENDPOINTS),
     ("the history bridge locates the checkout read-only", "source_mod.locate(" in HISTORY_ENDPOINTS),
+    ("score evidence uses the read-only locate", "source_mod.locate(" in EVIDENCE_ENDPOINT),
+    ("score evidence does not clone on open", "source_mod.resolve" not in EVIDENCE_ENDPOINT),
+    ("project refs uses the read-only locate", "source_mod.locate(" in REFS_ENDPOINT),
+    ("project refs does not clone on list", "source_mod.resolve" not in REFS_ENDPOINT),
+    ("HTML export does not load Mermaid from a CDN", "cdn.jsdelivr" not in EXPORT_PY and "MERMAID_CDN" not in EXPORT_PY),
+    ("HTML export embeds the vendored Mermaid build", "_vendored_mermaid" in EXPORT_PY),
+    ("the UI ships a vendored Mermaid build", VENDOR_MERMAID.is_file() and VENDOR_MERMAID.stat().st_size > 100_000),
+    ("fonts avoid Windows cloud-font downloads", "'Segoe UI Variable" not in CSS and "'Cascadia Code'" not in CSS and "Noto Sans Hebrew" not in CSS.split("--font:")[1].split(";")[0] if "--font:" in CSS else True),
     # A stored "not a repository" answer used to be returned forever.
     ("a negative history result is not cached", 'stored.get("available")' in BRIDGE_PY),
     # Raw git text in a Hebrew window is worse than no text at all.

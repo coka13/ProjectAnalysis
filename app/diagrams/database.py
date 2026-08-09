@@ -12,8 +12,22 @@ _TYPE_RE = re.compile(r"[^A-Za-z0-9_]+")
 
 
 def _normalise_type(raw: str) -> str:
+    """Mermaid ER attribute types must be identifiers, not bare numbers."""
     cleaned = _TYPE_RE.sub("_", (raw or "string")).strip("_")
-    return (cleaned or "string")[:24]
+    if not cleaned:
+        cleaned = "string"
+    # Lexer rejects digit-leading tokens (e.g. DEFAULT 2001 misread as a type).
+    if cleaned[0].isdigit():
+        cleaned = f"t_{cleaned}"
+    return cleaned[:24]
+
+
+def _attr_name(raw: str) -> str:
+    """Attribute names must also be valid Mermaid ATTRIBUTE_WORD tokens."""
+    name = safe_id(str(raw or "column"))
+    if name[0].isdigit():
+        name = f"c_{name}"
+    return name[:48]
 
 
 def _entity_name(name: str) -> str:
@@ -50,7 +64,7 @@ def generate(graph: KnowledgeGraph, filters: DiagramFilters) -> DiagramResult:
         foreign_columns = {fk.get("column") for fk in (table.attributes.get("foreign_keys") or [])}
         lines.append(f"  {entity} {{")
         for column in columns[:column_limit]:
-            name = safe_id(str(column.get("name", "column")))
+            name = _attr_name(column.get("name", "column"))
             column_type = _normalise_type(str(column.get("type", "string")))
             markers = []
             if column.get("primary_key"):
@@ -60,7 +74,8 @@ def generate(graph: KnowledgeGraph, filters: DiagramFilters) -> DiagramResult:
             elif column.get("unique"):
                 markers.append("UK")
             comment = "" if column.get("nullable", True) else ' "required"'
-            lines.append(f"    {column_type} {name}{(' ' + ' '.join(markers)) if markers else ''}{comment}")
+            marker_text = f" {','.join(markers)}" if markers else ""
+            lines.append(f"    {column_type} {name}{marker_text}{comment}")
         if len(columns) > column_limit:
             lines.append(f"    string more_{len(columns) - column_limit}_columns")
         if not columns:
@@ -125,7 +140,7 @@ def generate(graph: KnowledgeGraph, filters: DiagramFilters) -> DiagramResult:
         for column in entry["columns"][:column_limit]:
             marker = "*" if column.get("primary_key") else " "
             plantuml_lines.append(
-                f'  {marker} {safe_id(str(column.get("name", "col")))} : {_normalise_type(str(column.get("type", "")))}'
+                f'  {marker} {_attr_name(column.get("name", "col"))} : {_normalise_type(str(column.get("type", "")))}'
             )
         plantuml_lines.append("}")
     for relation in payload_relations:

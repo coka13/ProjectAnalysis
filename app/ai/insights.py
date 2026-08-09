@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from app.ai import prompts
-from app.ai.provider import AIProvider, AIProviderError, parse_json_response
+from app.ai.provider import AIProvider, AIProviderError
 from app.diagrams.base import DiagramFilters
 from app.graph.model import KnowledgeGraph, NodeKind
 
@@ -211,10 +211,10 @@ async def explain_diagram(
         return fallback
     try:
         context = prompts.graph_summary(graph)
-        raw = await provider.chat(prompts.explain_diagram(diagram, context, language), json_mode=True)
-        parsed = parse_json_response(raw)
-        if not parsed:
-            return fallback
+        parsed = await provider.chat_json(
+            prompts.explain_diagram(diagram, context, language),
+            max_tokens=max(provider.config.max_tokens, 3072),
+        )
         parsed.setdefault("purpose", fallback["purpose"])
         parsed.setdefault("description", fallback["description"])
         parsed.setdefault("key_components", fallback["key_components"])
@@ -417,10 +417,10 @@ async def review_architecture(
         return fallback
     try:
         context = prompts.graph_summary(graph, metrics)
-        raw = await provider.chat(prompts.architecture_review(context, _slim_metrics(metrics), language), json_mode=True)
-        parsed = parse_json_response(raw)
-        if not parsed:
-            return fallback
+        parsed = await provider.chat_json(
+            prompts.architecture_review(context, _slim_metrics(metrics), language),
+            max_tokens=max(provider.config.max_tokens, 4096),
+        )
         parsed["score"] = metrics.get("score", parsed.get("score", 0))
         parsed["grade"] = metrics.get("grade", "")
         parsed.setdefault("strengths", fallback["strengths"])
@@ -522,9 +522,12 @@ async def refactoring_suggestions(
         return fallback
     try:
         context = prompts.graph_summary(graph, metrics)
-        raw = await provider.chat(prompts.refactoring_plan(context, findings, language), json_mode=True)
-        parsed = parse_json_response(raw)
-        if not parsed or not parsed.get("suggestions"):
+        parsed = await provider.chat_json(
+            prompts.refactoring_plan(context, findings, language),
+            max_tokens=max(provider.config.max_tokens, 4096),
+        )
+        if not parsed.get("suggestions"):
+            fallback["warning"] = "AI returned JSON without refactoring suggestions"
             return fallback
         parsed["source"] = "ai"
         parsed["findings"] = findings
@@ -617,6 +620,105 @@ KIND_KEYWORDS: dict[str, tuple[str, ...]] = {
 
 EXECUTIVE_HINTS = ("executive", "customer", "simplified", "high level", "overview", "מנהלים", "פשוט", "לקוח")
 DETAILED_HINTS = ("detailed", "deep", "full", "everything", "מפורט")
+# Size adjectives shrink the node budget; they must never become a focus filter.
+SIZE_HINTS = {
+    "small": 12,
+    "tiny": 8,
+    "minimal": 10,
+    "simple": 14,
+    "brief": 12,
+    "compact": 14,
+    "קטן": 12,
+    "פשוט": 14,
+}
+KIND_STOPWORDS = {
+    word
+    for keywords in KIND_KEYWORDS.values()
+    for keyword in keywords
+    for word in keyword.split()
+    if len(word) > 2
+}
+PROMPT_STOPWORDS = {
+    "show",
+    "create",
+    "diagram",
+    "only",
+    "the",
+    "for",
+    "with",
+    "please",
+    "make",
+    "view",
+    "that",
+    "this",
+    "need",
+    "want",
+    "generate",
+    "draw",
+    "build",
+    "architecture",
+    "flow",
+    "system",
+    "customer",
+    "facing",
+    "simplified",
+    "executive",
+    "dependencies",
+    "small",
+    "tiny",
+    "minimal",
+    "simple",
+    "brief",
+    "compact",
+    "large",
+    "full",
+    "detailed",
+    "deep",
+    *KIND_STOPWORDS,
+    *SIZE_HINTS,
+}
+
+
+def _focus_matches_graph(graph: KnowledgeGraph, focus: str) -> bool:
+    needle = (focus or "").strip().lower()
+    if not needle:
+        return False
+    for node in graph.nodes.values():
+        haystack = " ".join(
+            [
+                node.name or "",
+                node.qualified_name or "",
+                node.module or "",
+                node.file or "",
+                str(node.attributes.get("stereotype", "")),
+            ]
+        ).lower()
+        if needle in haystack:
+            return True
+    return False
+
+
+def _sanitize_filters(graph: KnowledgeGraph, payload: dict[str, Any]) -> DiagramFilters:
+    """Drop focus/module filters that would empty the diagram."""
+    filters = DiagramFilters.from_payload(payload)
+    if filters.focus and not _focus_matches_graph(graph, filters.focus):
+        filters.focus = ""
+    if filters.modules:
+        known_modules = {
+            (node.module or node.qualified_name or node.name or "").lower()
+            for node in graph.nodes.values()
+        }
+        kept = [
+            module
+            for module in filters.modules
+            if any(
+                module.lower() == known or known.startswith(f"{module.lower()}/") or module.lower() in known
+                for known in known_modules
+                if known
+            )
+        ]
+        filters.modules = kept
+    return filters
 
 
 async def interpret_request(
@@ -634,8 +736,7 @@ async def interpret_request(
             "modules": [node.qualified_name for node in graph.by_kind(NodeKind.MODULE)][:80],
             "languages": list(graph.stats().get("files_by_language", {}).keys()),
         }
-        raw = await provider.chat(prompts.natural_language_query(prompt, available, language), json_mode=True)
-        parsed = parse_json_response(raw)
+        parsed = await provider.chat_json(prompts.natural_language_query(prompt, available, language))
         kind = str(parsed.get("kind", "")).strip().lower()
         from app.diagrams.registry import DIAGRAM_KINDS
 
@@ -645,9 +746,10 @@ async def interpret_request(
         if not isinstance(filters, dict):
             filters = {}
         merged = {**fallback["filters"], **{k: v for k, v in filters.items() if v not in (None, "")}}
+        cleaned = _sanitize_filters(graph, merged)
         return {
             "kind": kind,
-            "filters": DiagramFilters.from_payload(merged).to_dict(),
+            "filters": cleaned.to_dict(),
             "title": parsed.get("title") or fallback["title"],
             "reasoning": parsed.get("reasoning") or fallback["reasoning"],
             "source": "ai",
@@ -672,25 +774,35 @@ def _interpret_fallback(graph: KnowledgeGraph, prompt: str) -> dict[str, Any]:
     elif any(hint in lowered for hint in DETAILED_HINTS):
         detail = "detailed"
 
+    max_nodes = 18 if detail == "executive" else 60
+    for hint, budget in SIZE_HINTS.items():
+        if hint in lowered:
+            max_nodes = min(max_nodes, budget)
+            if detail == "standard":
+                detail = "executive"
+            break
+
     known = {node.name.lower(): node.name for node in graph.by_kind(NodeKind.COMPONENT)}
-    known.update({(node.qualified_name or node.name).lower(): (node.qualified_name or node.name) for node in graph.by_kind(NodeKind.MODULE)})
+    known.update(
+        {
+            (node.qualified_name or node.name).lower(): (node.qualified_name or node.name)
+            for node in graph.by_kind(NodeKind.MODULE)
+        }
+    )
     modules = [original for lowered_name, original in known.items() if lowered_name and lowered_name in lowered]
 
     focus = ""
     tokens = [token for token in re.split(r"[^A-Za-z0-9_\u0590-\u05FF]+", prompt) if len(token) > 3]
-    stopwords = {
-        "show", "create", "diagram", "only", "the", "for", "with", "please", "make", "view", "that", "this",
-        "architecture", "flow", "system", "customer", "facing", "simplified", "executive", "dependencies",
-    }
     for token in tokens:
-        if token.lower() in stopwords:
+        if token.lower() in PROMPT_STOPWORDS:
             continue
         if token.lower() in known or any(token.lower() in name for name in known):
             focus = token
             break
-    if not focus and not modules:
-        candidates = [token for token in tokens if token.lower() not in stopwords]
-        focus = candidates[0] if candidates else ""
+    # Never invent a focus from leftover prompt adjectives ("small", "class", …);
+    # that filters the graph to nothing and surfaces EmptyDiagramError.
+    if focus and not _focus_matches_graph(graph, focus):
+        focus = ""
 
     include_external = any(word in lowered for word in ("external", "third party", "integration", "חיצוני"))
     filters = DiagramFilters(
@@ -699,7 +811,7 @@ def _interpret_fallback(graph: KnowledgeGraph, prompt: str) -> dict[str, Any]:
         include_external=include_external,
         detail=detail,
         focus=focus,
-        max_nodes=18 if detail == "executive" else 60,
+        max_nodes=max_nodes,
     )
     return {
         "kind": kind,
@@ -727,10 +839,7 @@ async def explain_comparison(
     if provider is None:
         return fallback
     try:
-        raw = await provider.chat(prompts.comparison(diff, language), json_mode=True)
-        parsed = parse_json_response(raw)
-        if not parsed:
-            return fallback
+        parsed = await provider.chat_json(prompts.comparison(diff, language))
         parsed["source"] = "ai"
         return parsed
     except AIProviderError as exc:

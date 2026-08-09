@@ -22,11 +22,14 @@
   }
 
   function ensureMermaid() {
+    if (!window.mermaid) {
+      throw new Error('Mermaid failed to load (web/vendor/mermaid.min.js is required for offline use)');
+    }
     window.mermaid.initialize({
       startOnLoad: false,
       theme: theme(),
       securityLevel: 'strict',
-      fontFamily: 'Segoe UI, Noto Sans Hebrew, system-ui, sans-serif',
+      fontFamily: 'Segoe UI, system-ui, Arial, sans-serif',
       flowchart: { curve: 'basis', nodeSpacing: 42, rankSpacing: 62, useMaxWidth: false, htmlLabels: false },
       sequence: { useMaxWidth: false, wrap: true, width: 170 },
       class: { useMaxWidth: false },

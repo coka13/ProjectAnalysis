@@ -20,9 +20,11 @@ R_FULL = 999
 # its 16px root, so the native window measures the same as the original.
 F_XS, F_SM, F_MD, F_LG, F_XL, F_2XL, F_3XL, F_4XL = 11, 12, 14, 16, 20, 26, 34, 46
 
-# Inter first, exactly as the interface asks for it, then the same fallbacks.
-FONT_STACK = "Inter, Segoe UI Variable Text, Segoe UI, Noto Sans Hebrew, Arial, sans-serif"
-MONO_STACK = "Cascadia Code, JetBrains Mono, Fira Code, Consolas, Courier New, monospace"
+# Installed system fonts only (see web/css/app.css). Avoid faces Windows may
+# download from its cloud font provider when missing; offline that stalls or
+# substitutes and the UI looks different with and without a network.
+FONT_STACK = "Segoe UI, system-ui, Arial, sans-serif"
+MONO_STACK = "Consolas, Courier New, monospace"
 
 NAV_WIDTH = 244
 TOPBAR_H = 52
@@ -255,7 +257,7 @@ def stylesheet(p: Palette, *, scale: float = 1.0) -> str:
     QLabel[role="dim"] {{ color: {p.text_3}; font-size: {f(F_SM)}px; }}
 
     #NavGroup {{
-        color: {p.text_3};
+        color: {p.text_2};
         font-size: {f(F_XS)}px;
         font-weight: 700;
         padding: {S[3]}px {S[3]}px {S[1]}px {S[3]}px;
@@ -264,7 +266,7 @@ def stylesheet(p: Palette, *, scale: float = 1.0) -> str:
         background: transparent;
         border: none;
         border-radius: {R_SM}px;
-        color: {p.text_2};
+        color: {p.text};
         font-size: {f(F_SM)}px;
         font-weight: 500;
         min-height: {NAV_ITEM_H}px;
@@ -285,7 +287,7 @@ def stylesheet(p: Palette, *, scale: float = 1.0) -> str:
         padding-left: {S[3] - 3}px;
     }}
     QPushButton[nav="true"]:disabled {{
-        color: {p.text_3};
+        color: {p.text_2};
     }}
 
     QPushButton {{
@@ -405,15 +407,32 @@ def stylesheet(p: Palette, *, scale: float = 1.0) -> str:
     }}
     QProgressBar::chunk {{ background: {p.accent}; border-radius: {R_FULL}px; }}
 
+    QTabWidget::pane {{
+        border: none;
+        margin-top: {S[4]}px;
+    }}
+    QTabWidget::tab-bar {{ alignment: left; }}
+    QTabBar {{
+        border-bottom: 1px solid {p.line};
+    }}
     QTabBar::tab {{
         background: transparent;
         border: none;
         border-bottom: 2px solid transparent;
         color: {p.text_2};
-        padding: {S[3]}px {S[4]}px;
+        font-size: {f(F_SM)}px;
+        font-weight: 500;
+        padding: {S[2]}px {S[4]}px;
+        margin-bottom: -1px;
+        min-width: 4.5em;
     }}
-    QTabBar::tab:selected {{ color: {p.text}; border-bottom-color: {p.accent}; font-weight: 600; }}
-    QTabWidget::pane {{ border: none; }}
+    QTabBar::tab:hover {{ color: {p.text}; }}
+    QTabBar::tab:selected {{
+        color: {p.accent};
+        border-bottom-color: {p.accent};
+        font-weight: 600;
+    }}
+    QTabBar::tab:focus {{ outline: none; }}
 
     QMenu {{
         background: {p.surface_2};

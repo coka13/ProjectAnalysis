@@ -109,7 +109,12 @@
       max: 100,
       onAxis: (index) => onAxis(scorecard.categories[index].id),
     });
-    return charts.panel(t('score.balance'), chart, { subtitle: t('score.balanceHint') });
+    return card(
+      t('score.balance'),
+      { icon: 'layers' },
+      el('p', { class: 'small muted' }, t('score.balanceHint')),
+      el('div', { class: 'radar-wrap' }, chart.node),
+    );
   }
 
   /* ------------------------------------------------------- weighting view */
@@ -127,7 +132,12 @@
       unit: ' pts',
       width: 640,
     });
-    return charts.panel(t('score.lostPoints'), chart, { subtitle: t('score.lostPointsHint') });
+    return card(
+      t('score.lostPoints'),
+      { icon: 'chart' },
+      el('p', { class: 'small muted' }, t('score.lostPointsHint')),
+      el('div', { class: 'chart-wrap' }, chart.node),
+    );
   }
 
   /* ------------------------------------------------------------- signals */
@@ -551,20 +561,20 @@
               value: String(weights[category.id]),
               oninput: () => { readout.textContent = `${Math.round(input.value * 100)}%`; refreshTotal(); },
             });
-            const readout = el('span', { class: 'badge outline tabular', style: 'min-width:48px' },
+            const readout = el('span', { class: 'badge outline tabular' },
               `${Math.round(weights[category.id] * 100)}%`);
             inputs[category.id] = input;
-            return el('div', { class: 'row', style: 'align-items:center' },
-              el('span', { style: 'min-width:150px' }, catLabel(category.id)),
-              el('div', { class: 'grow' }, input),
+            return el('div', { class: 'weight-row' },
+              el('span', { class: 'weight-name' }, catLabel(category.id)),
+              el('div', { class: 'weight-slider' }, input),
               readout,
-              el('span', { class: 'small dim' }, `${t('score.default')} ${Math.round(defaults[category.id] * 100)}%`));
+              el('span', { class: 'small dim weight-default' }, `${t('score.default')} ${Math.round(defaults[category.id] * 100)}%`));
           });
           refreshTotal();
           clear(host).append(
             el('p', { class: 'small muted' }, t('score.weightsHint')),
-            ...rows,
-            el('div', { class: 'inline', style: 'margin-top:12px' },
+            el('div', { class: 'weight-list' }, ...rows),
+            el('div', { class: 'inline settings-actions' },
               totalLabel,
               el('span', { class: 'grow' }),
               el('button', {

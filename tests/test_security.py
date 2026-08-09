@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.ai.provider import AIProvider, AIProviderError, ProviderSettings, parse_json_response
@@ -70,3 +72,48 @@ def test_parse_json_response_handles_fenced_output():
     assert parse_json_response('```json\n{"a": 1}\n```') == {"a": 1}
     assert parse_json_response('prefix {"a": [1, 2]} suffix') == {"a": [1, 2]}
     assert parse_json_response("not json at all") == {}
+
+
+def test_parse_json_response_tolerates_local_model_noise():
+    noisy = '<think>plan first</think>\nSure.\n```json\n{"summary": "ok", "score": 70,}\n```\n'
+    assert parse_json_response(noisy) == {"summary": "ok", "score": 70}
+    assert parse_json_response('Here you go:\n{"title": "x", "items": [1, 2,]}') == {
+        "title": "x",
+        "items": [1, 2],
+    }
+    assert parse_json_response('[{"kind": "architecture"}]') == {"kind": "architecture"}
+
+
+def test_provider_retries_without_json_mode_on_http_400(monkeypatch):
+    """Local servers often reject response_format; one plain retry must succeed."""
+    import httpx
+
+    import app.ai.provider as provider_mod
+
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        calls.append(body)
+        if body.get("response_format"):
+            return httpx.Response(400, text='{"error":"response_format is not supported"}')
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok": true}'}}]})
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.Client
+
+    class PatchedClient(original_client):
+        def __init__(self, *args, **kwargs):
+            kwargs["transport"] = transport
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(provider_mod.httpx, "Client", PatchedClient)
+    provider = AIProvider(
+        ProviderSettings(base_url="https://x/v1", model="m", max_retries=0, timeout_seconds=5)
+    )
+    raw = provider.chat_sync([{"role": "user", "content": "hi"}], json_mode=True)
+
+    assert '"ok"' in raw
+    assert len(calls) == 2
+    assert "response_format" in calls[0]
+    assert "response_format" not in calls[1]

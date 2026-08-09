@@ -1495,7 +1495,7 @@ def preview(root: Path, relative: str, rule_ids: list[str]) -> dict[str, Any]:
 #     confirmed call that re-verifies that digest.
 # --------------------------------------------------------------------------- #
 AI_WINDOW = 24
-AI_MAX_CANDIDATES = 6
+AI_MAX_CANDIDATES = 12
 _AI_CACHE_LIMIT = 200
 _AI_PATCHES: dict[str, dict[str, Any]] = {}
 _FENCE = re.compile(r"^\s*```[\w-]*\n|\n?```\s*$")
@@ -1550,13 +1550,15 @@ async def enrich_with_ai(
 ) -> dict[str, Any]:
     """Attach model-authored patches to the proposals no rule can fix."""
     from app.ai import prompts  # imported lazily: the static path must not need it
-    from app.ai.provider import AIProviderError, parse_json_response
+    from app.ai.provider import AIProviderError
 
     root = Path(root).resolve()
     patched: dict[str, dict[str, Any]] = {}
     attempted = failed = 0
+    last_error = ""
+    candidates = ai_candidates(proposals, limit=limit)
 
-    for candidate in ai_candidates(proposals, limit=limit):
+    for candidate in candidates:
         relative = str(candidate["file"])
         try:
             target = _resolve_inside(root, relative)
@@ -1574,17 +1576,19 @@ async def enrich_with_ai(
         start, end, excerpt = _window(text, int(candidate["lines"][0]))
         attempted += 1
         try:
-            raw = await provider.chat(
-                prompts.code_fix(candidate, relative, excerpt, start + 1, language), json_mode=True
+            parsed = await provider.chat_json(
+                prompts.code_fix(candidate, relative, excerpt, start + 1, language)
             )
         except AIProviderError as exc:
             log.warning("AI fix for %s failed: %s", relative, exc)
+            last_error = str(exc)
             failed += 1
             continue
 
-        parsed = parse_json_response(raw) or {}
         replacement = _clean_replacement(parsed.get("replacement"))
         if not replacement or replacement.strip() == excerpt.strip():
+            if not replacement and parsed.get("diagnosis"):
+                last_error = str(parsed.get("diagnosis"))
             failed += 1
             continue
         # A replacement wildly longer than the excerpt means the model wandered
@@ -1616,12 +1620,16 @@ async def enrich_with_ai(
         }
 
     merged = [dict(p, **patched.get(p.get("id", ""), {})) for p in proposals]
-    return {
+    summary: dict[str, Any] = {
         "proposals": merged,
         "ai_attempted": attempted,
         "ai_patched": len(patched),
         "ai_failed": failed,
+        "ai_candidates": len(candidates),
     }
+    if attempted and not patched and last_error:
+        summary["ai_error"] = last_error
+    return summary
 
 
 def _confidence(value: Any) -> float:

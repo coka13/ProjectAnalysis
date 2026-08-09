@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -56,14 +56,25 @@ class ProjectDialog(QDialog):
         self.kind.addItem(t("project.sourceLocal"), "local")
         self.kind.addItem(t("project.sourceGit"), "git")
         self.ref = QLineEdit()
+        self.exclude = QLineEdit()
+        self.exclude.setPlaceholderText("tests/**, docs/**")
 
         form = QFormLayout(self)
         form.setSpacing(theme.S[3])
         form.addRow(t("project.name"), self.name)
         form.addRow(t("project.sourceKind"), self.kind)
-        form.addRow(t("project.location"), self.location)
-        form.addRow("", button(t("project.browse"), icon_name="folder", on_click=self._browse))
+
+        location_row = QWidget()
+        location_layout = QHBoxLayout(location_row)
+        location_layout.setContentsMargins(0, 0, 0, 0)
+        location_layout.setSpacing(theme.S[2])
+        location_layout.addWidget(self.location, 1)
+        location_layout.addWidget(
+            button(t("project.browse"), icon_name="folder", on_click=self._browse)
+        )
+        form.addRow(t("project.location"), location_row)
         form.addRow(t("project.ref"), self.ref)
+        form.addRow(t("project.exclude"), self.exclude)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -76,6 +87,8 @@ class ProjectDialog(QDialog):
         chosen = self.window.pick_folder()
         if chosen:
             self.location.setText(chosen)
+            if not self.name.text().strip():
+                self.name.setText(Path(chosen).name)
 
     def payload(self) -> dict:
         return {
@@ -83,6 +96,9 @@ class ProjectDialog(QDialog):
             "source_kind": self.kind.currentData(),
             "source_location": self.location.text().strip(),
             "default_ref": self.ref.text().strip(),
+            "exclude_globs": [
+                part.strip() for part in self.exclude.text().split(",") if part.strip()
+            ],
         }
 
 
@@ -114,7 +130,12 @@ class ProjectCard(QFrame):
             head.addWidget(badge(t(f"status.{status}"), STATUS_TONES.get(status, "info"), tokens))
         layout.addLayout(head)
 
-        source = ElidedLabel(f"{project.get('source_kind', '')}: {project.get('source_location', '')}")
+        source_label = (
+            t("project.sourceGit")
+            if project.get("source_kind") == "git"
+            else t("project.sourceLocal")
+        )
+        source = ElidedLabel(f"{source_label}: {project.get('source_location', '')}")
         source.setProperty("role", "muted")
         source.setStyleSheet(f"font-family: {theme.MONO_STACK}; color: {tokens.text_2};")
         layout.addWidget(source)

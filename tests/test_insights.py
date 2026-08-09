@@ -87,6 +87,21 @@ async def test_executive_hint_reduces_detail(graph):
     assert spec["filters"]["detail"] == "executive"
 
 
+def test_small_class_diagram_does_not_use_size_as_focus(graph):
+    """Adjectives like 'small' must shrink the budget, not filter class names."""
+    import asyncio
+
+    from app.diagrams.base import DiagramFilters
+    from app.diagrams.registry import generate
+
+    spec = asyncio.run(insights.interpret_request(graph, "create small class diagram", "en", provider=None))
+    assert spec["kind"] == "class"
+    assert not spec["filters"].get("focus")
+    assert spec["filters"]["max_nodes"] <= 12
+    result = generate(spec["kind"], graph, DiagramFilters.from_payload(spec["filters"]))
+    assert "classDiagram" in result.mermaid
+
+
 async def test_translate_is_a_noop_without_provider():
     result = await insights.translate("Order service", "he", provider=None)
     assert result["translated"] is False
