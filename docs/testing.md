@@ -22,20 +22,40 @@
 | `tests/test_packaging.py` | what changes once the app is frozen into an EXE |
 | `tests/test_ui_static.py` | runs the static audits below |
 | `tests/test_js_browser.py` | the in-browser JS suite |
+| `tests/test_native_ui.py` | the native interface: strings, icons, theme, widgets, threading |
 
-The git tests skip themselves if `git` is not on the PATH.
+The git tests skip themselves if `git` is not on the PATH, and
+`tests/test_native_ui.py` skips itself when PySide6 is not installed. It runs
+Qt through the offscreen platform, so it needs no display.
 
 ## Static audits
 
 ```powershell
-.\.venv\Scripts\python tools\audit_ui.py     # JS behaviour <-> CSS rules
-.\.venv\Scripts\python tools\audit_i18n.py   # en/he key parity
+.\.venv\Scripts\python tools\audit_ui.py        # JS behaviour <-> CSS rules
+.\.venv\Scripts\python tools\audit_i18n.py      # en/he key parity
+.\.venv\Scripts\python tools\audit_ui_keys.py   # the native UI's keys and placeholders
 ```
 
 `audit_ui.py` is a cheap net for one specific defect class: JS that toggles a
 class, attribute or preference that no CSS rule ever consumes, and features whose
 wiring is split across several files. Each check is a `(label, predicate)` pair
 over the raw source text - add one whenever you fix a bug of that shape.
+
+`audit_ui_keys.py` does the same job for the native interface. It fails when a
+view asks for a translation key that does not exist, and - the subtler case -
+when a key contains a `{placeholder}` the call site never fills, which would
+otherwise ship a literal `{n}` to the user.
+
+## Comparing the two interfaces
+
+```powershell
+.\.venv\Scripts\python tools\compare_ui.py --target both
+```
+
+That drives each front end through all fourteen views and writes matched pairs
+to `build/compare/<view>_{original,native}.png`. Every capture is checked for
+content first: a WebView2 window photographed with the wrong flag saves a
+perfectly blank image and would otherwise be reported as a success.
 
 ## Browser tests
 

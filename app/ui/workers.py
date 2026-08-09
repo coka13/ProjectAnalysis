@@ -15,6 +15,9 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 log = logging.getLogger("aai.ui.workers")
 
+# Deliveries that have no owning widget to keep them alive.
+_PENDING: set["_Delivery"] = set()
+
 
 class _Delivery(QObject):
     """Marshals a worker result onto the thread that created this object."""
@@ -77,9 +80,14 @@ def run(
     """Queue work and hand the result back on the UI thread.
 
     `owner` keeps the delivery alive for as long as the widget that asked for
-    it exists, so a view that closes mid-flight cannot be written to.
+    it exists, so a view that closes mid-flight cannot be written to. A
+    delivery with no owner is held here instead, because nothing else refers to
+    it once this returns and a collected one silently never fires.
     """
     delivery = _Delivery(on_done, on_error, parent=owner)
+    if owner is None:
+        _PENDING.add(delivery)
+        delivery.destroyed.connect(lambda *_: _PENDING.discard(delivery))
     QThreadPool.globalInstance().start(Task(fn, delivery, *args, **kwargs))
 
 
