@@ -1,154 +1,141 @@
-"""Analyses: start a run and watch it progress."""
+"""Analyses: every run of a project, and starting a new one."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QComboBox,
-    QHeaderView,
-    QProgressBar,
-    QTableWidget,
-    QTableWidgetItem,
-)
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QMessageBox, QProgressBar, QVBoxLayout, QWidget
 
+from app.ui import theme
 from app.ui.i18n import translator as t
 from app.ui.views.base import DataView
-from app.ui.widgets import Card, button, label, row
+from app.ui.widgets import Card, badge, button, label
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.ui.shell import MainWindow
 
-# Runs are polled while one is active; the analysis itself reports its stage.
 POLL_MS = 1200
+ACTIVE = ("running", "pending")
+STATUS_TONES = {
+    "succeeded": "ok",
+    "running": "info",
+    "pending": "info",
+    "failed": "err",
+    "cancelled": "warn",
+}
+
+
+class RunRow(QFrame):
+    """One run: its state, its ref, when it finished, and how to remove it."""
+
+    def __init__(self, run: dict, view: "AnalysesView", selected: bool, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("Row")
+        tokens = view.window.palette_tokens
+        border = tokens.accent if selected else tokens.line
+        self.setStyleSheet(
+            f"#Row {{ border: 1px solid {border}; border-radius: {theme.R_MD}px;"
+            f" background: {tokens.surface_2}; }}"
+        )
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(theme.S[4], theme.S[3], theme.S[4], theme.S[3])
+        layout.setSpacing(theme.S[2])
+
+        top = QHBoxLayout()
+        top.setSpacing(theme.S[3])
+        status = str(run.get("status") or "")
+        top.addWidget(badge(t(f"status.{status}"), STATUS_TONES.get(status, "muted"), tokens))
+        top.addWidget(label(str(run.get("ref") or "—"), role="muted"))
+        when = str(run.get("finished_at") or run.get("created_at") or "")
+        top.addWidget(label(when[:19].replace("T", " ")))
+        top.addStretch(1)
+
+        remove = button(
+            "", variant="ghost", icon_name="trash", colour=tokens.danger, tooltip=t("analysis.delete")
+        )
+        remove.setFixedWidth(36)
+        remove.clicked.connect(lambda: view.delete(run))
+        top.addWidget(remove)
+        layout.addLayout(top)
+
+        if status in ACTIVE:
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(int(float(run.get("progress") or 0) * 100))
+            bar.setTextVisible(False)
+            layout.addWidget(bar)
+            layout.addWidget(label(str(run.get("stage") or t("analysis.running")), role="dim"))
 
 
 class AnalysesView(DataView):
-    COLUMNS = ("analysis.ref", "analysis.status", "analysis.stage", "analysis.duration")
-
     def __init__(self, window: "MainWindow") -> None:
         super().__init__(window, "nav.analyses", "analysis.subtitle")
-        self._projects: list[dict] = []
         self._runs: list[dict] = []
 
-        self.picker = QComboBox()
-        self.picker.setMinimumWidth(260)
-        self.picker.currentIndexChanged.connect(lambda _: self._load_runs())
-
-        self.add(
-            row(
-                self.picker,
-                button(t("analysis.start"), variant="primary", icon_name="play", on_click=self._start),
-                button(t("analysis.cancel"), icon_name="cross", on_click=self._cancel),
-                button(t("common.retry"), icon_name="refresh", on_click=self.refresh),
-            )
+        self.add_header_action(
+            button(t("analysis.start"), variant="primary", icon_name="play", on_click=self._start)
         )
 
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.progress.setVisible(False)
-        self.add(self.progress)
-        self._stage = label("", role="dim")
-        self.add(self._stage)
-
         card = Card()
-        self.table = QTableWidget(0, len(self.COLUMNS))
-        self.table.setHorizontalHeaderLabels([t(key) for key in self.COLUMNS])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.setMinimumHeight(340)
-        card.add(self.table)
-        self.add(card, 1)
+        holder = QWidget()
+        holder.setObjectName("Plain")
+        self._rows = QVBoxLayout(holder)
+        self._rows.setContentsMargins(0, 0, 0, 0)
+        self._rows.setSpacing(theme.S[3])
+        card.add(holder)
+        self._empty = label(t("analysis.empty"), role="muted")
+        card.add(self._empty)
+        self.add(card)
         self.add_stretch()
 
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_MS)
-        self._timer.timeout.connect(self._poll)
+        self._timer.timeout.connect(self.load)
 
     # ------------------------------------------------------------------ data
     def load(self) -> None:
-        self.fetch(self.api.projects_list, on_done=self._fill_projects)
-
-    def _fill_projects(self, projects: Any) -> None:
-        self._projects = list(projects or [])
-        current = self.picker.currentData()
-        self.picker.blockSignals(True)
-        self.picker.clear()
-        for project in self._projects:
-            self.picker.addItem(str(project.get("name", "")), project.get("id"))
-        if current is not None:
-            index = self.picker.findData(current)
-            if index >= 0:
-                self.picker.setCurrentIndex(index)
-        self.picker.blockSignals(False)
-        self._load_runs()
-
-    def _project_id(self) -> int | None:
-        return self.picker.currentData()
-
-    def _load_runs(self) -> None:
-        project_id = self._project_id()
+        project_id = self.window.project_picker.currentData()
         if project_id is None:
-            self.table.setRowCount(0)
+            self._clear()
+            self._empty.setVisible(True)
             return
-        self.fetch(self.api.analyses_list, {"project_id": project_id}, on_done=self._fill_runs)
+        self.fetch(self.api.analyses_list, {"project_id": project_id}, on_done=self._show)
 
-    def _fill_runs(self, runs: Any) -> None:
+    def _clear(self) -> None:
+        while self._rows.count():
+            item = self._rows.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+
+    def _show(self, runs: Any) -> None:
         self._runs = list(runs or [])
-        self.table.setRowCount(len(self._runs))
-        active = None
-        for r, run in enumerate(self._runs):
-            cells = (
-                str(run.get("ref") or "—"),
-                str(run.get("status") or ""),
-                str(run.get("stage") or ""),
-                str(run.get("started_at") or "")[:19].replace("T", " "),
-            )
-            for c, text in enumerate(cells):
-                self.table.setItem(r, c, QTableWidgetItem(text))
-            if run.get("status") in ("running", "pending"):
-                active = run
-        self._show_active(active)
-
-    def _show_active(self, run: dict | None) -> None:
-        if run is None:
-            self.progress.setVisible(False)
-            self._stage.setText("")
-            self._timer.stop()
-            self.window.current_analysis_id = self._latest_done_id()
-            return
-        self.progress.setVisible(True)
-        self.progress.setValue(int(float(run.get("progress") or 0) * 100))
-        self._stage.setText(str(run.get("stage") or ""))
-        if not self._timer.isActive():
-            self._timer.start()
-
-    def _latest_done_id(self) -> int | None:
+        self._clear()
+        current = self.window.current_analysis_id
         for run in self._runs:
-            if run.get("status") == "succeeded":
-                return run.get("id")
-        return None
+            self._rows.addWidget(RunRow(run, self, run.get("id") == current))
+        self._empty.setVisible(not self._runs)
 
-    def _poll(self) -> None:
-        self._load_runs()
+        # Poll only while something is in flight; an idle screen stays still.
+        if any(run.get("status") in ACTIVE for run in self._runs):
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._timer.stop()
 
     # --------------------------------------------------------------- actions
     def _start(self) -> None:
-        project_id = self._project_id()
+        project_id = self.window.project_picker.currentData()
         if project_id is None:
             self.show_error(t("common.required"))
             return
-        self.fetch(self.api.analysis_start, {"project_id": project_id}, on_done=lambda _: self._load_runs())
+        self.fetch(self.api.analysis_start, {"project_id": project_id}, on_done=lambda _: self.load())
 
-    def _cancel(self) -> None:
-        for run in self._runs:
-            if run.get("status") in ("running", "pending"):
-                self.fetch(
-                    self.api.analysis_cancel, {"analysis_id": run.get("id")}, on_done=lambda _: self._load_runs()
-                )
-                return
+    def delete(self, run: dict) -> None:
+        confirm = QMessageBox.question(self, t("analysis.delete"), str(run.get("ref") or ""))
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self.fetch(
+            self.api.analysis_delete, {"analysis_id": run.get("id")}, on_done=lambda _: self.load()
+        )

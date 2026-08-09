@@ -137,6 +137,53 @@ class SearchField(QLineEdit):
         painter.end()
 
 
+class Segmented(QWidget):
+    """A row of pills where exactly one is chosen, applied on click.
+
+    The settings screen has no Save button: choosing a pill is the action, so
+    each one reports its value straight away.
+    """
+
+    def __init__(
+        self,
+        options: list[tuple[str, str]],
+        current: str,
+        on_change: Callable[[str], None],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("Plain")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(theme.S[2])
+
+        from PySide6.QtWidgets import QButtonGroup
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        for value, text in options:
+            pill = QPushButton(text)
+            pill.setProperty("seg", "true")
+            pill.setCheckable(True)
+            pill.setCursor(Qt.CursorShape.PointingHandCursor)
+            pill.setChecked(value == current)
+            pill.clicked.connect(lambda _=False, v=value: on_change(v))
+            self._group.addButton(pill)
+            layout.addWidget(pill)
+        layout.addStretch(1)
+
+
+def field(caption: str, control: QWidget) -> QWidget:
+    """A settings row: a small upper-case caption above its control."""
+    holder = QWidget()
+    holder.setObjectName("Plain")
+    layout = QVBoxLayout(holder)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(theme.S[1])
+    layout.addWidget(label(caption.upper(), role="dim"))
+    layout.addWidget(control)
+    return holder
+
+
 def badge(text: str, tone: str, tokens: "theme.Palette") -> QLabel:
     """A pill, matching the `.badge` rule: soft fill, full radius, 11px bold."""
     tints = {
@@ -158,6 +205,7 @@ def badge(text: str, tone: str, tokens: "theme.Palette") -> QLabel:
 
 def row(*widgets: QWidget, spacing: int = theme.S[3], stretch_last: bool = False) -> QWidget:
     holder = QWidget()
+    holder.setObjectName("Plain")
     layout = QHBoxLayout(holder)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(spacing)
@@ -170,6 +218,7 @@ def row(*widgets: QWidget, spacing: int = theme.S[3], stretch_last: bool = False
 
 def column(*widgets: QWidget, spacing: int = theme.S[3]) -> QWidget:
     holder = QWidget()
+    holder.setObjectName("Plain")
     layout = QVBoxLayout(holder)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(spacing)
@@ -261,6 +310,7 @@ class Grid(QWidget):
 
     def __init__(self, columns: int = 4, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("Plain")
         from PySide6.QtWidgets import QGridLayout
 
         self._columns = max(1, columns)

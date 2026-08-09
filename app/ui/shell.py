@@ -216,7 +216,6 @@ class MainWindow(QMainWindow):
         self.theme_button.setToolTip(t("common.theme"))
         self.theme_button.clicked.connect(self.toggle_theme)
         layout.addWidget(self.theme_button)
-
         about = QPushButton()
         about.setProperty("variant", "ghost")
         about.setIcon(make_icon("info", self.palette_tokens.text_2, 18))
@@ -338,11 +337,9 @@ class MainWindow(QMainWindow):
         self._sync_theme_button()
 
     def _sync_theme_button(self) -> None:
-        # The button offers the other scheme, so it shows that one's symbol.
-        going_light = self.prefs.theme == "dark"
-        self.theme_button.setIcon(
-            make_icon("sparkle" if going_light else "shield", self.palette_tokens.text_2, 18)
-        )
+        # The button offers the other scheme, so it shows that one's symbol -
+        # a character, as the original does, since there is no moon glyph.
+        self.theme_button.setText("\u263e" if self.prefs.theme == "dark" else "\u2600")
 
     # ------------------------------------------------------- topbar pickers
     def load_pickers(self) -> None:

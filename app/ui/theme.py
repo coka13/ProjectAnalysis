@@ -184,6 +184,10 @@ def stylesheet(p: Palette, *, scale: float = 1.0) -> str:
     QLabel, QCheckBox, QRadioButton {{
         background: transparent;
     }}
+    /* Neither may a bare layout holder: it would show as a band across a card. */
+    QWidget#Plain {{
+        background: transparent;
+    }}
     QToolTip {{
         background: {p.surface_3};
         color: {p.text};
@@ -305,6 +309,25 @@ def stylesheet(p: Palette, *, scale: float = 1.0) -> str:
     QPushButton[variant="primary"]:hover {{ background: {p.accent_2}; border-color: {p.accent_2}; }}
     QPushButton[variant="ghost"] {{ background: transparent; border-color: transparent; color: {p.text_2}; }}
     QPushButton[variant="ghost"]:hover {{ background: {p.muted_soft}; color: {p.text}; }}
+    /* Segmented pills: the settings screen applies a choice on click. */
+    QPushButton[seg="true"] {{
+        background: {p.surface_2};
+        border: 1px solid {p.line};
+        border-radius: {R_FULL}px;
+        color: {p.text_2};
+        font-size: {f(F_SM)}px;
+        font-weight: 500;
+        min-height: 26px;
+        padding: 4px {S[3]}px;
+    }}
+    QPushButton[seg="true"]:hover {{ border-color: {p.line_strong}; color: {p.text}; }}
+    /* The chosen pill changes colour only: going bold here would widen the
+       text past the width the button was already sized for, and clip it. */
+    QPushButton[seg="true"]:checked {{
+        background: {p.accent_soft};
+        border-color: {p.accent};
+        color: {p.accent};
+    }}
     /* Destructive actions are outlined, not filled - the same weight the
        original gives them, so they do not shout louder than the primary. */
     QPushButton[variant="danger"] {{
